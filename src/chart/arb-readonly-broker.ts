@@ -52,8 +52,8 @@ export const ARB_READONLY_BROKER_CONFIG: SingleBrokerMetaInfo = {
     /** Drag цены bracket-лимитки/стопа. */
     supportModifyOrderPrice: true,
     supportEditAmount: false,
+    /** Drag TP/SL: editPositionBrackets + modifyOrder на bracket-заявках. */
     supportModifyBrackets: true,
-    supportModifyPositionBrackets: true,
     supportPLUpdate: true,
     supportMarketOrders: false,
     /** Нужны, чтобы TV рисовал Working limit/stop bracket на графике. */
