@@ -15,6 +15,7 @@ import {
 } from '@/arbitrages/moex-iss-margin'
 import { useLegFunding } from '@/arbitrages/useLegFunding'
 import { useLegMargins } from '@/arbitrages/useLegMargins'
+import { useMetalTripleLots } from '@/arbitrages/useMetalTripleLots'
 
 /** Смещение стоп/тейк по умолчанию, % от текущего спреда. */
 const DEFAULT_STOP_TAKE_PCT = 0.1
@@ -37,7 +38,12 @@ export function ArbSpreadDetailsCard({
   className,
 }: ArbSpreadDetailsCardProps) {
   const codes = useMemo(() => arbPairLegCodes(pair), [pair])
-  const [baseLots, setBaseLots] = useState(pair.defaultBaseLots)
+  const metalLots = useMetalTripleLots(pair, codes)
+  const effectivePair = useMemo(
+    () => ({ ...pair, lotRatios: metalLots.lotRatios, defaultBaseLots: metalLots.defaultBaseLots }),
+    [pair, metalLots.lotRatios, metalLots.defaultBaseLots],
+  )
+  const [baseLots, setBaseLots] = useState(effectivePair.defaultBaseLots)
   const [takeInput, setTakeInput] = useState('')
   const [stopInput, setStopInput] = useState('')
   const seededPairId = useRef<string | null>(null)
@@ -50,11 +56,11 @@ export function ArbSpreadDetailsCard({
   } = useLegFunding(codes)
 
   useEffect(() => {
-    setBaseLots(pair.defaultBaseLots)
+    setBaseLots(effectivePair.defaultBaseLots)
     seededPairId.current = null
     setTakeInput('')
     setStopInput('')
-  }, [pair.id, pair.defaultBaseLots])
+  }, [pair.id, effectivePair.defaultBaseLots])
 
   useEffect(() => {
     if (currentSpread == null || !(currentSpread > 0)) {
@@ -69,7 +75,10 @@ export function ArbSpreadDetailsCard({
     setStopInput(formatLevel(currentSpread * (1 - offset)))
   }, [currentSpread, pair.id])
 
-  const lots = useMemo(() => resolveLegLots(pair, baseLots), [pair, baseLots])
+  const lots = useMemo(
+    () => resolveLegLots(effectivePair, baseLots),
+    [effectivePair, baseLots],
+  )
 
   const rows = codes.map((code, idx) => {
     const qty = lots[idx] ?? 0
@@ -78,8 +87,12 @@ export function ArbSpreadDetailsCard({
     return { code, qty, go: go ?? null, margin }
   })
 
-  const totalMargin = rows.reduce((sum, row) => sum + (row.margin ?? 0), 0)
-  const hasAllMargins = rows.every((row) => row.margin != null)
+  /** Сумма ГО только по ногам с маржой (фьючи); акции без ГО в итог не входят. */
+  const marginRows = rows.filter((row) => row.margin != null)
+  const totalMargin = marginRows.reduce((sum, row) => sum + (row.margin ?? 0), 0)
+  const hasAnyMargin = marginRows.length > 0
+  const waitingMargins =
+    loading && rows.some((row) => row.go == null) && !hasAnyMargin
 
   /** Референс для пункта спреда — последняя нога (метал / валюта). */
   const refIdx = codes.length > 0 ? codes.length - 1 : -1
@@ -100,7 +113,17 @@ export function ArbSpreadDetailsCard({
   const takePnl = signedLevelPnl(currentSpread, takeLevel, pointValueRub, 'take')
   const stopPnl = signedLevelPnl(currentSpread, stopLevel, pointValueRub, 'stop')
 
-  const ratioLabel = pair.lotRatios.map((r) => formatRatio(r)).join(' : ')
+  const ratioLabel = metalLots.lotRatios.map((r) => formatRatio(r)).join(' : ')
+  const metalPriceLabel =
+    metalLots.metalCode != null
+      ? metalLots.metalUsdPrice != null
+        ? `${metalLots.metalCode} ${metalLots.metalUsdPrice.toLocaleString('ru-RU', {
+            maximumFractionDigits: 2,
+          })}`
+        : metalLots.loading
+          ? `${metalLots.metalCode} …`
+          : null
+      : null
 
   return (
     <div
@@ -119,6 +142,12 @@ export function ArbSpreadDetailsCard({
             Соотношение лотов:{' '}
             <span className="tabular-nums text-foreground">{ratioLabel}</span>
           </span>
+          {metalPriceLabel ? (
+            <span>
+              Металл:{' '}
+              <span className="tabular-nums text-foreground">{metalPriceLabel}</span>
+            </span>
+          ) : null}
           <span>
             Текущий:{' '}
             <span className="tabular-nums text-foreground">
@@ -171,11 +200,11 @@ export function ArbSpreadDetailsCard({
           </div>
         ))}
         <div className="grid grid-cols-[minmax(0,1.2fr)_0.7fr_1fr_1fr] gap-1 border-t border-[rgba(166,189,213,0.2)] bg-[rgba(41,98,255,0.08)] px-2 py-1.5 text-[12px] font-semibold">
-          <span className="text-foreground">Итого</span>
+          <span className="text-foreground">Итого ГО</span>
           <span />
           <span />
           <span className="text-right tabular-nums text-foreground">
-            {loading && !hasAllMargins ? '…' : formatRub(hasAllMargins ? totalMargin : null)}
+            {waitingMargins ? '…' : formatRub(hasAnyMargin ? totalMargin : null)}
           </span>
         </div>
       </div>

@@ -44,21 +44,83 @@ function ratioPair(
   }
 }
 
+/** Тройская унция, г (как в arbitrage-calculator). */
+export const METAL_TROY_OUNCE_GRAMS = 31.1
+
+/** База тройника золота: граммы / лоты GOLD. */
+export const GOLD_TRIPLE_GRAMS = 311
+export const GOLD_TRIPLE_METAL_LOTS = 10
+
+/** База тройника серебра: граммы / лоты SILV (10 лотов/oz × 20 oz). */
+export const SILVER_TRIPLE_GRAMS = 622
+export const SILVER_TRIPLE_METAL_LOTS = 200
+
+/** Металл тройника по кодам ног. */
+export type MetalTripleKind = 'gold' | 'silver'
+
 /**
- * Тройник GLDRUBF|SLVRUBF×31.1 / FX / GOLD|SILV — лотности 311 / ~36 / 10.
- * USDRUBF ≈ SI по размеру лота $1000.
+ * Золото / серебро тройник по ногам (GLDRUBF|GOLD / SLVRUBF|SILV).
+ */
+export function resolveMetalTripleKind(codes: readonly string[]): MetalTripleKind | null {
+  if (codes.some((c) => c === 'SLVRUBF' || /^SILV-/i.test(c))) {
+    return 'silver'
+  }
+  if (codes.some((c) => c === 'GLDRUBF' || /^GOLD-/i.test(c))) {
+    return 'gold'
+  }
+  return null
+}
+
+/** Тикер фьючерса металла из ног (GOLD-12.26 / SILV-12.26). */
+export function resolveMetalFuturesCode(codes: readonly string[]): string | null {
+  return codes.find((c) => /^GOLD-/i.test(c) || /^SILV-/i.test(c)) ?? null
+}
+
+/**
+ * Лотности тройника от цены металла $/oz (LAST GOLD/SILV).
+ * Формулы как в arbitrage-calculator XpbeeCalculator:
+ * - gold SI = GOLD / 1000 / 31.1 × grams
+ * - silver SI = (SILV / 1000 / 31.1) × 100 × grams
+ * USDRUBF ≈ SI ($1000).
+ */
+export function resolveMetalTripleLotRatios(
+  kind: MetalTripleKind,
+  metalUsdPrice: number | null | undefined,
+): { lotRatios: number[]; defaultBaseLots: number } {
+  if (kind === 'silver') {
+    const grams = SILVER_TRIPLE_GRAMS
+    const metalLots = SILVER_TRIPLE_METAL_LOTS
+    const fxLots =
+      metalUsdPrice != null && metalUsdPrice > 0
+        ? grams * (metalUsdPrice / 1000 / METAL_TROY_OUNCE_GRAMS) * 100
+        : 0
+    return { lotRatios: [grams, fxLots, metalLots], defaultBaseLots: grams }
+  }
+  const grams = GOLD_TRIPLE_GRAMS
+  const metalLots = GOLD_TRIPLE_METAL_LOTS
+  const fxLots =
+    metalUsdPrice != null && metalUsdPrice > 0
+      ? grams * (metalUsdPrice / 1000 / METAL_TROY_OUNCE_GRAMS)
+      : 0
+  return { lotRatios: [grams, fxLots, metalLots], defaultBaseLots: grams }
+}
+
+/**
+ * Тройник металл ×31.1 / FX / GOLD|SILV.
+ * Статичные лотности — fallback; в UI пересчёт от LAST металла.
  */
 function metalTriplePair(ticker: string, description: string): ArbPair {
   const legs = parseCompositeTicker(ticker)
   const codes = legs?.map((l) => l.code) ?? []
-  const hasSi = codes.some((c) => /^SI-/i.test(c))
+  const kind = resolveMetalTripleKind(codes) ?? 'gold'
+  const { lotRatios, defaultBaseLots } = resolveMetalTripleLotRatios(kind, null)
   return {
     id: ticker,
     ticker,
     label: ticker.replace(/\*/g, '×').replace(/\//g, ' / '),
     description,
-    lotRatios: hasSi ? [311, 35.78, 10] : [311, 36, 10],
-    defaultBaseLots: 311,
+    lotRatios,
+    defaultBaseLots,
   }
 }
 
@@ -89,6 +151,8 @@ export const ARB_FOREX_PAIRS: ArbPair[] = [
   ratioPair('SI-3.27/CNY-3.27', 'SI / CNY · H27', [40, 267], 40),
   ratioPair('USDRUBF/CNYRUBF', 'USD / CNY · вечные', [1, 6.6683], 1),
   ratioPair('EURRUBF/CNYRUBF', 'EUR / CNY · вечные', [1, 8], 1),
+  ratioPair('EURRUBF/USDRUBF/ED-12.26', 'EUR ₽ / USD ₽ vs ED', [1, 1, 1], 1),
+  ratioPair('EURRUBF/USDRUBF/ED-3.27', 'EUR ₽ / USD ₽ vs ED · H27', [1, 1, 1], 1),
   metalTriplePair('GLDRUBF*31.1/USDRUBF/GOLD-12.26', 'Золото ₽ → $/oz vs GOLD'),
   metalTriplePair('GLDRUBF*31.1/SI-12.26/GOLD-12.26', 'GLDRUBF / SI / GOLD'),
   metalTriplePair('GLDRUBF*31.1/USDRUBF/GOLD-3.27', 'Золото ₽ → $/oz vs GOLD · H27'),
