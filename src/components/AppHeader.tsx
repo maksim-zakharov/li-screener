@@ -25,7 +25,8 @@ export interface AppHeaderNavItem {
 }
 
 const DEFAULT_NAV_ITEMS: AppHeaderNavItem[] = [
-  { to: '/', label: 'Главная', end: true },
+  { to: '/', label: 'Графики', end: true },
+  { to: '/arbitrages', label: 'Арбитражи' },
   { to: '/about', label: 'О проекте' },
 ]
 

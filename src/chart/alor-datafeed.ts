@@ -19,6 +19,13 @@ import type {
 } from '@/assets/charting_library'
 import { ensureAlorAccessToken } from '@/api/alor-client'
 import { mapAlorSymbolToQuote } from '@/chart/alor-quotes'
+import {
+  earliestBarTimeSec,
+  mergeSpreadHistory,
+  MOEX_SPREAD_MULTIPLE,
+  ratioSpreadBar,
+  splitSpreadLegs as splitSpreadLegsRaw,
+} from '@/chart/alor-spread'
 
 /** Сессия MOEX для TradingView (как в smartmoney chart-session). */
 const MOEX_SESSION = '0700-2350|1000-1900:17'
@@ -166,7 +173,13 @@ function candleTimeToMs(raw: number): number {
   return raw < 1e12 ? raw * 1000 : raw
 }
 
+/** Ноги спреда `A/B` без префиксов биржи. */
+function splitSpreadLegs(symbol: string) {
+  return splitSpreadLegsRaw(symbol, bareSymbol)
+}
+
 type UnsubscribeFn = () => void | Promise<void>
+type AlorTf = '15' | '60' | '300' | '3600' | 'D' | 'W' | 'M' | 'Y'
 
 /**
  * Datafeed: история + свечи WS + котировки Watchlist (Alor quotes REST/WS).
@@ -485,7 +498,44 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
   }
 
   /**
-   * Resolve через getSecurityByExchangeAndSymbol (minstep / pricescale как на фронте).
+   * Синтетический LibrarySymbolInfo для `A/B` (как smartmoney для isSentetic).
+   * Не зависит от Alor securities — иначе TV пишет «такого инструмента не существует».
+   */
+  private buildSpreadSymbolInfo(
+    symbol: string,
+    legs: { left: string; right: string },
+    exchange: 'MOEX' | 'SPBX',
+    currency = 'RUB',
+  ): LibrarySymbolInfo {
+    /** Как DEFAULT_CHART_PRECISION на фронте для спредов. */
+    const precision = 3
+    const pricescale = 10 ** precision
+    return {
+      ticker: symbol,
+      name: symbol,
+      description: `(${legs.left}/${legs.right})×${MOEX_SPREAD_MULTIPLE}`,
+      type: 'spread',
+      session: MOEX_SESSION,
+      timezone: MOEX_TIMEZONE,
+      exchange,
+      listed_exchange: exchange,
+      currency_code: currency,
+      format: 'price',
+      pricescale,
+      minmov: 1,
+      has_intraday: true,
+      has_daily: true,
+      has_seconds: true,
+      seconds_multipliers: ['1', '5', '15'],
+      has_weekly_and_monthly: true,
+      supported_resolutions: SUPPORTED_RESOLUTIONS,
+      volume_precision: 0,
+      data_status: 'streaming',
+    }
+  }
+
+  /**
+   * Resolve: одиночный — Alor security; спред `A/B` — всегда синтетика (ноги для history/WS).
    */
   private async resolveSymbolAsync(
     symbolName: string,
@@ -498,14 +548,34 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
       return
     }
 
-    /** Синтетическая пара SBER/SBERP — базовая нога. */
-    const resolveCode = symbol.includes('/') ? symbol.split('/')[0]!.trim() : symbol
+    const legs = splitSpreadLegs(symbol)
     const exchange = resolveExchange(symbolName)
+
+    if (legs) {
+      let currency = 'RUB'
+      try {
+        const api = await ensureAlorAccessToken()
+        const security = await api.instruments
+          .getSecurityByExchangeAndSymbol({
+            symbol: legs.left,
+            exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
+            format: 'Simple',
+          })
+          .catch(() => null)
+        if (security?.currency) {
+          currency = String(security.currency)
+        }
+      } catch (error) {
+        console.warn(`Alor resolve spread ${symbol}:`, error)
+      }
+      onResolve(this.buildSpreadSymbolInfo(symbol, legs, exchange, currency))
+      return
+    }
 
     try {
       const api = await ensureAlorAccessToken()
       const security = await api.instruments.getSecurityByExchangeAndSymbol({
-        symbol: resolveCode,
+        symbol,
         exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
         format: 'Simple',
       })
@@ -514,13 +584,12 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
       const step = Number.isFinite(minstep) && minstep > 0 ? minstep : 0.01
       const precision = getPrecision(step)
       const pricescale = Number((10 ** precision).toFixed(precision))
-      const type = normalizeSearchType(security.type, exchange)
 
       const info: LibrarySymbolInfo = {
         ticker: symbol,
         name: String(security.shortname ?? symbol),
         description: String(security.description ?? security.shortname ?? symbol),
-        type,
+        type: normalizeSearchType(security.type, exchange),
         session: MOEX_SESSION,
         timezone: MOEX_TIMEZONE,
         exchange,
@@ -560,21 +629,117 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
 
       const symbol = bareSymbol(symbolInfo.ticker || symbolInfo.name)
       const exchange = resolveExchange(symbolInfo.ticker || symbolInfo.name, symbolInfo.exchange || 'MOEX')
+      const alorExchange = exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX
       const key = this.barKey(symbol, resolution)
-      const tf = mapResolutionToAlorTf(resolution)
+      const tf = mapResolutionToAlorTf(resolution) as AlorTf
       const lastMs = this.lastBarTimeMs.get(key)
       // Без from Alor льёт историю → TV сбрасывает кэш и снова getBars (цикл).
       const fromSec = lastMs
         ? Math.floor(lastMs / 1000)
         : Math.floor(Date.now() / 1000) - Math.max(Number(tf) || 60, 60)
 
+      const legs = splitSpreadLegs(symbol)
+      if (legs) {
+        const lastLeft: { bar: Bar | null } = { bar: null }
+        const lastRight: { bar: Bar | null } = { bar: null }
+
+        const emitSpread = () => {
+          if (subState.cancelled || !lastLeft.bar || !lastRight.bar) {
+            return
+          }
+          // Как на фронте для MOEX: только совпадающий time.
+          if (lastLeft.bar.time !== lastRight.bar.time) {
+            return
+          }
+          const spread = ratioSpreadBar(lastLeft.bar, lastRight.bar, MOEX_SPREAD_MULTIPLE)
+          if (!spread) {
+            return
+          }
+          const knownLast = this.lastBarTimeMs.get(key)
+          if (knownLast != null && spread.time < knownLast) {
+            return
+          }
+          this.lastBarTimeMs.set(key, spread.time)
+          onTick(spread)
+        }
+
+        const toBar = (data: {
+          time?: number
+          open?: number
+          high?: number
+          low?: number
+          close?: number
+          volume?: number
+        }): Bar | null => {
+          const timeMs = candleTimeToMs(Number(data.time))
+          if (!(timeMs > 0)) {
+            return null
+          }
+          return {
+            time: timeMs,
+            open: Number(data.open),
+            high: Number(data.high),
+            low: Number(data.low),
+            close: Number(data.close),
+            volume: Number(data.volume ?? 0),
+          }
+        }
+
+        const [unsubLeft, unsubRight] = await Promise.all([
+          api.subscriptions.candles(
+            { code: legs.left, exchange: alorExchange, format: Format.Simple, tf, from: fromSec },
+            (data) => {
+              if (subState.cancelled || !data) {
+                return
+              }
+              const bar = toBar(data)
+              if (!bar) {
+                return
+              }
+              lastLeft.bar = bar
+              emitSpread()
+            },
+          ),
+          api.subscriptions.candles(
+            { code: legs.right, exchange: alorExchange, format: Format.Simple, tf, from: fromSec },
+            (data) => {
+              if (subState.cancelled || !data) {
+                return
+              }
+              const bar = toBar(data)
+              if (!bar) {
+                return
+              }
+              lastRight.bar = bar
+              emitSpread()
+            },
+          ),
+        ])
+
+        if (subState.cancelled) {
+          void unsubLeft()
+          void unsubRight()
+          return
+        }
+
+        const existing = this.subscriptions.get(listenerGuid) ?? []
+        this.subscriptions.set(listenerGuid, [
+          ...existing,
+          () => {
+            subState.cancelled = true
+            return unsubLeft()
+          },
+          () => unsubRight(),
+        ])
+        return
+      }
+
       const unsubscribe = await api.subscriptions.candles(
         {
-          code: symbol.includes('/') ? symbol.split('/')[0]!.trim() : symbol,
-          exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
+          code: symbol,
+          exchange: alorExchange,
           format: Format.Simple,
-          // Alor: tf в секундах (1 / 5 / 15 / 60 / 900 …); типы SDK неполные.
-          tf: tf as '15' | '60' | '300' | '3600' | 'D' | 'W' | 'M' | 'Y',
+          tf,
           from: fromSec,
         },
         (data) => {
@@ -587,7 +752,6 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
           }
 
           const knownLast = this.lastBarTimeMs.get(key)
-          // Старые свечи из WS-дампа ломают TV (reset → getBars → subscribe → снова дамп).
           if (knownLast != null && timeMs < knownLast) {
             return
           }
@@ -622,6 +786,39 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     }
   }
 
+  private async fetchHistoryBars(
+    symbol: string,
+    exchange: 'MOEX' | 'SPBX',
+    tf: string,
+    fromSec: number,
+    toSec: number,
+  ): Promise<Bar[]> {
+    const api = await ensureAlorAccessToken()
+    const result = await api.instruments.getHistory({
+      symbol,
+      exchange,
+      tf: tf as AlorTf,
+      from: fromSec,
+      to: toSec,
+      format: 'Simple',
+    })
+    const toMs = toSec * 1000
+    return (result.history ?? [])
+      .map((candle) => {
+        const timeMs = candleTimeToMs(Number(candle.time))
+        return {
+          time: timeMs,
+          open: Number(candle.open),
+          high: Number(candle.high),
+          low: Number(candle.low),
+          close: Number(candle.close),
+          volume: Number(candle.volume ?? 0),
+        }
+      })
+      .filter((bar) => Number.isFinite(bar.time) && bar.time <= toMs)
+      .sort((a, b) => a.time - b.time)
+  }
+
   private async fetchBars(
     symbolInfo: LibrarySymbolInfo,
     resolution: ResolutionString,
@@ -630,58 +827,57 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     onError: DatafeedErrorCallback,
   ): Promise<void> {
     try {
-      const api = await ensureAlorAccessToken()
+      // Как на фронте: на первом запросе to=now — иначе TV тащит stale to от прошлого символа.
+      const effectiveParams: PeriodParams = periodParams.firstDataRequest
+        ? { ...periodParams, to: Math.floor(Date.now() / 1000) }
+        : periodParams
+
       const symbol = bareSymbol(symbolInfo.ticker || symbolInfo.name)
-      const historySymbol = symbol.includes('/') ? symbol.split('/')[0]!.trim() : symbol
       const exchange = resolveExchange(symbolInfo.ticker || symbolInfo.name, symbolInfo.exchange || 'MOEX')
-      const fromSec = Math.max(periodParams.from, 0)
-      const toSec = Math.max(periodParams.to, 1)
+      const fromSec = Math.max(effectiveParams.from, 0)
+      const toSec = Math.max(effectiveParams.to, 1)
       const tf = mapResolutionToAlorTf(resolution)
+      const fromMs = fromSec * 1000
+      const legs = splitSpreadLegs(symbol)
 
-      const result = await api.instruments.getHistory({
-        symbol: historySymbol,
-        exchange,
-        // Alor: tf в секундах (1 / 5 / 15 / 60 / 900 …); типы SDK неполные.
-        tf: tf as '60' | '300' | '3600' | 'D' | 'W' | 'M' | 'Y',
-        from: fromSec,
-        to: toSec,
-        format: 'Simple',
-      })
-
-      const history = result.history ?? []
-      if (history.length === 0) {
-        onResult([], { noData: true })
-        return
+      let bars: Bar[]
+      let nextTime: number | undefined
+      if (legs) {
+        const [leftBars, rightBars] = await Promise.all([
+          this.fetchHistoryBars(legs.left, exchange, tf, fromSec, toSec).catch((err) => {
+            console.warn(`Alor history ${legs.left}:`, err)
+            return [] as Bar[]
+          }),
+          this.fetchHistoryBars(legs.right, exchange, tf, fromSec, toSec).catch((err) => {
+            console.warn(`Alor history ${legs.right}:`, err)
+            return [] as Bar[]
+          }),
+        ])
+        bars = mergeSpreadHistory(leftBars, rightBars, MOEX_SPREAD_MULTIPLE)
+        if (bars.length === 0) {
+          nextTime = earliestBarTimeSec([leftBars, rightBars])
+          console.warn(
+            `Alor spread ${symbol}: left=${leftBars.length} right=${rightBars.length} merged=0`,
+          )
+        }
+      } else {
+        bars = await this.fetchHistoryBars(symbol, exchange, tf, fromSec, toSec)
       }
 
-      const toMs = toSec * 1000
-      const fromMs = fromSec * 1000
-      const bars: Bar[] = history
-        .map((candle) => {
-          const timeMs = candleTimeToMs(Number(candle.time))
-          return {
-            time: timeMs,
-            open: Number(candle.open),
-            high: Number(candle.high),
-            low: Number(candle.low),
-            close: Number(candle.close),
-            volume: Number(candle.volume ?? 0),
-          }
-        })
-        .filter((bar) => Number.isFinite(bar.time) && bar.time < toMs)
-        .sort((a, b) => a.time - b.time)
-
       let filtered = bars
-      if (!periodParams.firstDataRequest) {
+      if (!effectiveParams.firstDataRequest) {
         filtered = bars.filter((bar) => bar.time >= fromMs)
       }
 
       if (filtered.length === 0) {
-        onResult([], { noData: true })
+        onResult([], {
+          noData: true,
+          nextTime: nextTime ?? (fromSec > 0 ? fromSec : undefined),
+        })
         return
       }
 
-      if (periodParams.firstDataRequest) {
+      if (effectiveParams.firstDataRequest) {
         const last = filtered[filtered.length - 1]
         this.lastBarTimeMs.set(this.barKey(symbol, resolution), last.time)
       }

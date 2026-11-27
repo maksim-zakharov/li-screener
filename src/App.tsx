@@ -3,6 +3,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Toaster } from '@/components/ui/sonner'
 import { AboutPage } from '@/pages/AboutPage'
+import { ArbitragesPage } from '@/pages/ArbitragesPage'
 import { HomePage } from '@/pages/HomePage'
 
 /** Корневой роутер приложения (HashRouter для GitHub Pages). */
@@ -13,6 +14,7 @@ function App() {
         <Routes>
           <Route element={<AppLayout />}>
             <Route index element={<HomePage />} />
+            <Route path="arbitrages" element={<ArbitragesPage />} />
             <Route path="about" element={<AboutPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

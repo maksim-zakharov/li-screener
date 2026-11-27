@@ -22,6 +22,8 @@ interface AlorChartProps {
   height?: number | string
   /** Локаль виджета */
   locale?: LanguageCode
+  /** Показывать правую панель TV (watchlist / details). По умолчанию true. */
+  showWidgetBar?: boolean
 }
 
 /**
@@ -56,23 +58,27 @@ const ENABLED_FEATURES: TradingTerminalFeatureset[] = [
 
 /**
  * TradingView-график Alor (MOEX) с полным UI.
- * Виджет создаётся один раз; пересоздание — только при смене токена.
+ * Виджет создаётся один раз; смена тикера — `setSymbol` без remount (как TradeFi).
+ * Пересоздание — только при смене токена.
  */
 export function AlorChart({
   symbol = 'SBER',
   interval = '15' as ResolutionString,
   height = 520,
   locale = 'ru',
+  showWidgetBar = true,
 }: AlorChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const widgetRef = useRef<IChartingLibraryWidget | null>(null)
-  const propsRef = useRef({ symbol, interval, locale })
-  propsRef.current = { symbol, interval, locale }
+  const propsRef = useRef({ symbol, interval, locale, showWidgetBar })
+  propsRef.current = { symbol, interval, locale, showWidgetBar }
 
   const [tokenMissing, setTokenMissing] = useState(() => !getAlorRefreshToken())
   const [error, setError] = useState<string | null>(null)
   /** Инкремент только при ALOR_TOKEN_CHANGED — единственный повод пересоздать виджет. */
   const [chartEpoch, setChartEpoch] = useState(0)
+  /** Бамп после onChartReady — чтобы setSymbol сработал, когда iframe уже есть. */
+  const [chartReadyVersion, setChartReadyVersion] = useState(0)
 
   useEffect(() => {
     const onTokenChanged = () => {
@@ -96,13 +102,27 @@ export function AlorChart({
 
     setTokenMissing(false)
     setError(null)
+    setChartReadyVersion(0)
 
-    const { symbol: currentSymbol, interval: currentInterval, locale: currentLocale } = propsRef.current
+    const {
+      symbol: currentSymbol,
+      interval: currentInterval,
+      locale: currentLocale,
+      showWidgetBar: widgetBarOn,
+    } = propsRef.current
     if (!currentSymbol.trim()) {
       return
     }
 
     const datafeed = new AlorDatafeed()
+    const disabledFeatures: TradingTerminalFeatureset[] = [...DISABLED_FEATURES]
+    if (!widgetBarOn) {
+      disabledFeatures.push(
+        'right_toolbar',
+        'show_right_widgets_panel_by_default',
+      )
+    }
+
     const config: TradingTerminalWidgetOptions = {
       debug: false,
       container,
@@ -123,15 +143,15 @@ export function AlorChart({
         backgroundColor: 'rgb(16,16,20)',
         foregroundColor: 'rgb(173,177,184)',
       },
-      disabled_features: DISABLED_FEATURES,
+      disabled_features: disabledFeatures,
       enabled_features: ENABLED_FEATURES,
       custom_css_url: `${CHARTING_LIBRARY_PATH}tw-chart-theme.css`,
       auto_save_delay: 1,
       widgetbar: {
-        details: true,
-        watchlist: true,
+        details: widgetBarOn,
+        watchlist: widgetBarOn,
         news: false,
-        datawindow: true,
+        datawindow: widgetBarOn,
       },
     }
 
@@ -154,6 +174,7 @@ export function AlorChart({
       } catch {
         // ignore
       }
+      setChartReadyVersion((v) => v + 1)
     })
 
     return () => {
@@ -166,9 +187,40 @@ export function AlorChart({
         widgetRef.current = null
       }
     }
-    // Намеренно только chartEpoch: symbol/interval читаем из propsRef.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- виджет не должен пересоздаваться на каждый рендер
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- symbol меняется через setSymbol
   }, [chartEpoch])
+
+  /**
+   * Смена тикера без remount — как TradeFi: activeChart().setSymbol.
+   */
+  useEffect(() => {
+    const chartWidget = widgetRef.current
+    const next = symbol.trim()
+    if (!next || !chartWidget || chartReadyVersion <= 0) {
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const chartApi = chartWidget.activeChart()
+        if (!chartApi || cancelled || widgetRef.current !== chartWidget) {
+          return
+        }
+        const current = String(chartApi.symbol?.() ?? '').trim()
+        if (current.toUpperCase() === next.toUpperCase()) {
+          return
+        }
+        await Promise.resolve(chartApi.setSymbol(next))
+      } catch (err) {
+        console.warn('AlorChart setSymbol:', err)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [symbol, chartReadyVersion])
 
   const sizeStyle = typeof height === 'number' ? { height } : { height }
 
