@@ -18,6 +18,10 @@ import type {
   SubscribeBarsCallback,
 } from '@/assets/charting_library'
 import { ensureAlorAccessToken } from '@/api/alor-client'
+import {
+  alorSharedRpc,
+  alorSharedSubscribe,
+} from '@/api/shared-ws/alor-shared-bridge'
 import { mapAlorSymbolToQuote } from '@/chart/alor-quotes'
 import {
   earliestBarTimeSec,
@@ -296,7 +300,6 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     onErrorCallback: QuotesErrorCallback,
   ): Promise<void> {
     try {
-      const api = await ensureAlorAccessToken()
       const unique = [...new Set(symbols.map((s) => s.trim()).filter(Boolean))]
       if (unique.length === 0) {
         onDataCallback([])
@@ -309,10 +312,21 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
         return { chartName, code, exchange, wire: `${exchange}:${code}` }
       })
 
-      const raw = await api.instruments.getQuotes({
-        symbols: alorKeys.map((k) => k.wire).join(','),
-        format: 'Simple',
-      })
+      const wire = alorKeys.map((k) => k.wire).join(',')
+      const shared = alorSharedRpc<unknown>('getQuotes', { symbols: wire })
+      let raw: unknown
+      if (shared) {
+        try {
+          raw = await shared
+        } catch (error) {
+          console.warn('Alor SharedWorker getQuotes → tab fallback', error)
+          const api = await ensureAlorAccessToken()
+          raw = await api.instruments.getQuotes({ symbols: wire, format: 'Simple' })
+        }
+      } else {
+        const api = await ensureAlorAccessToken()
+        raw = await api.instruments.getQuotes({ symbols: wire, format: 'Simple' })
+      }
       const list = Array.isArray(raw) ? raw : []
 
       const byWire = new Map<string, (typeof list)[number]>()
@@ -347,7 +361,6 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     subState: { cancelled: boolean },
   ): Promise<void> {
     try {
-      const api = await ensureAlorAccessToken()
       if (subState.cancelled) {
         return
       }
@@ -364,19 +377,42 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
           continue
         }
         const exchange = resolveExchange(chartName)
+        const onQuote = (data: unknown) => {
+          if (subState.cancelled) {
+            return
+          }
+          onRealtimeCallback([mapAlorSymbolToQuote(chartName, data as never)])
+        }
+
+        const sharedUnsub = alorSharedSubscribe({
+          kind: 'quotes',
+          params: { code, exchange },
+          onData: onQuote,
+          onError: (message) => {
+            console.warn(`Alor SharedWorker quotes ${chartName}:`, message)
+          },
+        })
+
+        if (sharedUnsub) {
+          unsubs.push(() => {
+            subState.cancelled = true
+            sharedUnsub()
+          })
+          continue
+        }
+
         try {
+          const api = await ensureAlorAccessToken()
+          if (subState.cancelled) {
+            return
+          }
           const unsubscribe = await api.subscriptions.quotes(
             {
               code,
               exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
               format: Format.Simple,
             },
-            (data) => {
-              if (subState.cancelled) {
-                return
-              }
-              onRealtimeCallback([mapAlorSymbolToQuote(chartName, data)])
-            },
+            onQuote,
           )
           if (subState.cancelled) {
             void unsubscribe()
@@ -416,7 +452,6 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     onResult: SearchSymbolsCallback,
   ): Promise<void> {
     try {
-      const api = await ensureAlorAccessToken()
       const query = bareSymbol(userInput.split('/')[0] ?? userInput)
       const exchangeFilter = String(exchange)
         .split(',')
@@ -432,20 +467,47 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
             : ['MOEX']
 
       const sectors = sectorsForSymbolType(symbolType)
+      type SecurityRow = {
+        symbol?: string
+        exchange?: string
+        description?: string
+        shortname?: string
+        type?: string | null
+      }
+      const fetchSecurities = async (
+        ex: 'MOEX' | 'SPBX',
+        sector: 'FORTS' | 'FOND' | 'CURR' | undefined,
+      ): Promise<SecurityRow[]> => {
+        const params = {
+          query: query || ' ',
+          exchange: ex,
+          limit: 80,
+          ...(sector ? { sector } : {}),
+        }
+        const shared = alorSharedRpc<SecurityRow[]>('getSecurities', params)
+        if (shared) {
+          try {
+            const rows = await shared
+            return Array.isArray(rows) ? rows : []
+          } catch (error) {
+            console.warn('Alor SharedWorker getSecurities → tab fallback', error)
+          }
+        }
+        const api = await ensureAlorAccessToken()
+        const rows = await api.instruments
+          .getSecurities({
+            query: params.query,
+            format: 'Simple',
+            exchange: ex,
+            limit: 80,
+            ...(sector ? { sector } : {}),
+          })
+          .catch(() => [] as SecurityRow[])
+        return Array.isArray(rows) ? (rows as SecurityRow[]) : []
+      }
+
       const batches = await Promise.all(
-        exchanges.flatMap((ex) =>
-          sectors.map((sector) =>
-            api.instruments
-              .getSecurities({
-                query: query || ' ',
-                format: 'Simple',
-                exchange: ex,
-                limit: 80,
-                ...(sector ? { sector } : {}),
-              })
-              .catch(() => []),
-          ),
-        ),
+        exchanges.flatMap((ex) => sectors.map((sector) => fetchSecurities(ex, sector))),
       )
 
       const seen = new Set<string>()
@@ -555,15 +617,8 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     if (legs) {
       let currency = 'RUB'
       try {
-        const api = await ensureAlorAccessToken()
-        const security = await api.instruments
-          .getSecurityByExchangeAndSymbol({
-            symbol: legs[0]!.code,
-            exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
-            format: 'Simple',
-          })
-          .catch(() => null)
-        if (security?.currency) {
+        const security = await this.fetchSecurity(legs[0]!.code, exchange)
+        if (security && typeof security === 'object' && 'currency' in security && security.currency) {
           currency = String(security.currency)
         }
       } catch (error) {
@@ -574,12 +629,13 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     }
 
     try {
-      const api = await ensureAlorAccessToken()
-      const security = await api.instruments.getSecurityByExchangeAndSymbol({
-        symbol,
-        exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
-        format: 'Simple',
-      })
+      const security = (await this.fetchSecurity(symbol, exchange)) as {
+        minstep?: number
+        shortname?: string
+        description?: string
+        type?: string
+        currency?: string
+      }
 
       const minstep = Number(security.minstep ?? 0.01)
       const step = Number.isFinite(minstep) && minstep > 0 ? minstep : 0.01
@@ -615,6 +671,90 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     }
   }
 
+  /**
+   * Security через SharedWorker (fallback — вкладка).
+   */
+  private async fetchSecurity(symbol: string, exchange: 'MOEX' | 'SPBX'): Promise<unknown> {
+    const shared = alorSharedRpc<unknown>('getSecurity', { symbol, exchange })
+    if (shared) {
+      try {
+        return await shared
+      } catch (error) {
+        console.warn('Alor SharedWorker getSecurity → tab fallback', error)
+      }
+    }
+    const api = await ensureAlorAccessToken()
+    return api.instruments.getSecurityByExchangeAndSymbol({
+      symbol,
+      exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
+      format: 'Simple',
+    })
+  }
+
+  /**
+   * Подписка на свечи: SharedWorker (refcount между вкладками) → tab fallback.
+   */
+  private async subscribeCandleLeg(opts: {
+    code: string
+    exchange: 'MOEX' | 'SPBX'
+    tf: string
+    fromSec: number
+    onData: (data: {
+      time?: number
+      open?: number
+      high?: number
+      low?: number
+      close?: number
+      volume?: number
+    }) => void
+    subState: { cancelled: boolean }
+  }): Promise<UnsubscribeFn> {
+    const sharedUnsub = alorSharedSubscribe({
+      kind: 'candles',
+      params: {
+        code: opts.code,
+        exchange: opts.exchange,
+        tf: opts.tf,
+        from: opts.fromSec,
+      },
+      onData: (data) => {
+        if (opts.subState.cancelled || !data) return
+        opts.onData(data as never)
+      },
+      onError: (message) => {
+        console.warn(`Alor SharedWorker candles ${opts.code}:`, message)
+      },
+    })
+    if (sharedUnsub) {
+      return () => {
+        opts.subState.cancelled = true
+        sharedUnsub()
+      }
+    }
+
+    const api = await ensureAlorAccessToken()
+    if (opts.subState.cancelled) {
+      return () => undefined
+    }
+    const unsubscribe = await api.subscriptions.candles(
+      {
+        code: opts.code,
+        exchange: opts.exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
+        format: Format.Simple,
+        tf: opts.tf as AlorTf,
+        from: opts.fromSec,
+      },
+      (data) => {
+        if (opts.subState.cancelled || !data) return
+        opts.onData(data)
+      },
+    )
+    return () => {
+      opts.subState.cancelled = true
+      return unsubscribe()
+    }
+  }
+
   private async startCandleSubscription(
     symbolInfo: LibrarySymbolInfo,
     resolution: ResolutionString,
@@ -623,21 +763,41 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     subState: { cancelled: boolean },
   ): Promise<void> {
     try {
-      const api = await ensureAlorAccessToken()
       if (subState.cancelled) {
         return
       }
 
       const symbol = bareSymbol(symbolInfo.ticker || symbolInfo.name)
       const exchange = resolveExchange(symbolInfo.ticker || symbolInfo.name, symbolInfo.exchange || 'MOEX')
-      const alorExchange = exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX
       const key = this.barKey(symbol, resolution)
-      const tf = mapResolutionToAlorTf(resolution) as AlorTf
+      const tf = mapResolutionToAlorTf(resolution)
       const lastMs = this.lastBarTimeMs.get(key)
       // Без from Alor льёт историю → TV сбрасывает кэш и снова getBars (цикл).
       const fromSec = lastMs
         ? Math.floor(lastMs / 1000)
         : Math.floor(Date.now() / 1000) - Math.max(Number(tf) || 60, 60)
+
+      const toBar = (data: {
+        time?: number
+        open?: number
+        high?: number
+        low?: number
+        close?: number
+        volume?: number
+      }): Bar | null => {
+        const timeMs = candleTimeToMs(Number(data.time))
+        if (!(timeMs > 0)) {
+          return null
+        }
+        return {
+          time: timeMs,
+          open: Number(data.open),
+          high: Number(data.high),
+          low: Number(data.low),
+          close: Number(data.close),
+          volume: Number(data.volume ?? 0),
+        }
+      }
 
       const legs = parseComposite(symbol)
       if (legs) {
@@ -659,44 +819,21 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
           onTick(spread)
         }
 
-        const toBar = (data: {
-          time?: number
-          open?: number
-          high?: number
-          low?: number
-          close?: number
-          volume?: number
-        }): Bar | null => {
-          const timeMs = candleTimeToMs(Number(data.time))
-          if (!(timeMs > 0)) {
-            return null
-          }
-          return {
-            time: timeMs,
-            open: Number(data.open),
-            high: Number(data.high),
-            low: Number(data.low),
-            close: Number(data.close),
-            volume: Number(data.volume ?? 0),
-          }
-        }
-
         const unsubs = await Promise.all(
           legs.map((leg, idx) =>
-            api.subscriptions.candles(
-              { code: leg.code, exchange: alorExchange, format: Format.Simple, tf, from: fromSec },
-              (data) => {
-                if (subState.cancelled || !data) {
-                  return
-                }
+            this.subscribeCandleLeg({
+              code: leg.code,
+              exchange,
+              tf,
+              fromSec,
+              subState,
+              onData: (data) => {
                 const bar = toBar(data)
-                if (!bar) {
-                  return
-                }
+                if (!bar) return
                 lastBars[idx] = bar
                 emitSpread()
               },
-            ),
+            }),
           ),
         )
 
@@ -708,51 +845,27 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
         }
 
         const existing = this.subscriptions.get(listenerGuid) ?? []
-        this.subscriptions.set(listenerGuid, [
-          ...existing,
-          ...unsubs.map((unsubscribe, idx) => () => {
-            if (idx === 0) {
-              subState.cancelled = true
-            }
-            return unsubscribe()
-          }),
-        ])
+        this.subscriptions.set(listenerGuid, [...existing, ...unsubs])
         return
       }
 
-      const unsubscribe = await api.subscriptions.candles(
-        {
-          code: symbol,
-          exchange: alorExchange,
-          format: Format.Simple,
-          tf,
-          from: fromSec,
-        },
-        (data) => {
-          if (subState.cancelled || !data) {
-            return
-          }
-          const timeMs = candleTimeToMs(Number(data.time))
-          if (!(timeMs > 0)) {
-            return
-          }
-
+      const unsubscribe = await this.subscribeCandleLeg({
+        code: symbol,
+        exchange,
+        tf,
+        fromSec,
+        subState,
+        onData: (data) => {
+          const bar = toBar(data)
+          if (!bar) return
           const knownLast = this.lastBarTimeMs.get(key)
-          if (knownLast != null && timeMs < knownLast) {
+          if (knownLast != null && bar.time < knownLast) {
             return
           }
-
-          this.lastBarTimeMs.set(key, timeMs)
-          onTick({
-            time: timeMs,
-            open: Number(data.open),
-            high: Number(data.high),
-            low: Number(data.low),
-            close: Number(data.close),
-            volume: Number(data.volume ?? 0),
-          })
+          this.lastBarTimeMs.set(key, bar.time)
+          onTick(bar)
         },
-      )
+      })
 
       if (subState.cancelled) {
         void unsubscribe()
@@ -760,13 +873,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
       }
 
       const existing = this.subscriptions.get(listenerGuid) ?? []
-      this.subscriptions.set(listenerGuid, [
-        ...existing,
-        () => {
-          subState.cancelled = true
-          return unsubscribe()
-        },
-      ])
+      this.subscriptions.set(listenerGuid, [...existing, unsubscribe])
     } catch (error) {
       console.warn('Alor WS candles: ошибка подписки', error)
     }
@@ -779,15 +886,35 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
     fromSec: number,
     toSec: number,
   ): Promise<Bar[]> {
-    const api = await ensureAlorAccessToken()
-    const result = await api.instruments.getHistory({
-      symbol,
-      exchange,
-      tf: tf as AlorTf,
-      from: fromSec,
-      to: toSec,
-      format: 'Simple',
-    })
+    const params = { symbol, exchange, tf, from: fromSec, to: toSec }
+    let result: { history?: Array<Record<string, unknown>> }
+    const shared = alorSharedRpc<{ history?: Array<Record<string, unknown>> }>('getHistory', params)
+    if (shared) {
+      try {
+        result = await shared
+      } catch (error) {
+        console.warn('Alor SharedWorker getHistory → tab fallback', error)
+        const api = await ensureAlorAccessToken()
+        result = (await api.instruments.getHistory({
+          symbol,
+          exchange,
+          tf: tf as AlorTf,
+          from: fromSec,
+          to: toSec,
+          format: 'Simple',
+        })) as { history?: Array<Record<string, unknown>> }
+      }
+    } else {
+      const api = await ensureAlorAccessToken()
+      result = (await api.instruments.getHistory({
+        symbol,
+        exchange,
+        tf: tf as AlorTf,
+        from: fromSec,
+        to: toSec,
+        format: 'Simple',
+      })) as { history?: Array<Record<string, unknown>> }
+    }
     const toMs = toSec * 1000
     return (result.history ?? [])
       .map((candle) => {
