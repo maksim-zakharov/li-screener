@@ -13,6 +13,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Browser polyfill for Node `ws` — alor-api subscriptions
+      ws: path.resolve(__dirname, './src/alias/ws.js'),
     },
   },
 })

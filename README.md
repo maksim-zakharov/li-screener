@@ -21,6 +21,21 @@ npm run preview  # превью сборки
 Стили и design tokens: `src/index.css`  
 Тема: `src/components/theme-provider.tsx` (по умолчанию `dark`)
 
+## TradingView Charting Library
+
+Скопируй пакет библиотеки в **обе** папки (как в smartmoney-client):
+
+| Папка | Зачем |
+|-------|--------|
+| `public/assets/charting_library/` | статика для `library_path` |
+| `src/assets/charting_library/` | `import { widget }` и типы |
+
+```ts
+import { widget } from '@/assets/charting_library'
+import { CHARTING_LIBRARY_PATH } from '@/lib/charting-library-path'
+// library_path: CHARTING_LIBRARY_PATH
+```
+
 ## Деплой
 
 При пуше в `main` GitHub Actions собирает проект и публикует `dist/` на GitHub Pages.
