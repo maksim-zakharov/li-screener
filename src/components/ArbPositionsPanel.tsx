@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { formatArbNumber, type ArbQuoteRow } from '@/arbitrages/arb-quote'
 import {
   setArbBrokerChartPositions,
+  subscribeArbBrokerBracketEdits,
   type ArbBrokerChartPosition,
 } from '@/arbitrages/arb-broker-positions.store'
 import {
@@ -10,6 +12,7 @@ import {
   formatPositionLots,
   formatPositionSide,
   loadArbPositions,
+  normalizeArbExitPrice,
   resolvePositionAvgSpread,
   resolvePositionSide,
   saveArbPositions,
@@ -59,6 +62,32 @@ export function ArbPositionsPanel({
     return () => {
       setArbBrokerChartPositions([])
     }
+  }, [])
+
+  /** Drag TP/SL на графике → те же поля в позе / таблице / localStorage. */
+  useEffect(() => {
+    return subscribeArbBrokerBracketEdits((positionId, patch) => {
+      /** sync: иначе тик quotes перезапишет broker-снимок без TP/SL. */
+      flushSync(() => {
+        setPositions((prev) => {
+          const index = prev.findIndex((row) => row.id === positionId)
+          if (index < 0) {
+            return prev
+          }
+          const current = prev[index]!
+          const nextRow: ArbPosition = { ...current }
+          if ('takeProfit' in patch) {
+            nextRow.takeProfit = normalizeArbExitPrice(patch.takeProfit)
+          }
+          if ('stopLoss' in patch) {
+            nextRow.stopLoss = normalizeArbExitPrice(patch.stopLoss)
+          }
+          const next = [...prev]
+          next[index] = nextRow
+          return next
+        })
+      })
+    })
   }, [])
 
   const marginCodes = useMemo(() => {

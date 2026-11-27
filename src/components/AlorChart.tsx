@@ -214,6 +214,7 @@ export function AlorChart({
         'paneProperties.background': 'rgb(16,16,20)',
         'paneProperties.backgroundType': 'solid',
         'tradingProperties.showPositions': true,
+        'tradingProperties.showOrders': true,
         'tradingProperties.positionPL.visibility': true,
         'tradingProperties.extendLeft': true,
         'tradingProperties.lineLength': 50,
@@ -267,6 +268,7 @@ export function AlorChart({
           'tradingProperties.lineLength': 50,
           'tradingProperties.extendLeft': true,
           'tradingProperties.positionPL.visibility': true,
+          'tradingProperties.showOrders': true,
           'tradingProperties.showReverse': false,
         })
       } catch {
