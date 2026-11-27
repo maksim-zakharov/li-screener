@@ -5,9 +5,12 @@ import type {
   DatafeedErrorCallback,
   HistoryCallback,
   IBasicDataFeed,
+  IDatafeedQuotesApi,
   LibrarySymbolInfo,
   OnReadyCallback,
   PeriodParams,
+  QuotesCallback,
+  QuotesErrorCallback,
   ResolutionString,
   ResolveCallback,
   SearchSymbolResultItem,
@@ -15,13 +18,28 @@ import type {
   SubscribeBarsCallback,
 } from '@/assets/charting_library'
 import { ensureAlorAccessToken } from '@/api/alor-client'
+import { mapAlorSymbolToQuote } from '@/chart/alor-quotes'
 
 /** Сессия MOEX для TradingView (как в smartmoney chart-session). */
 const MOEX_SESSION = '0700-2350|1000-1900:17'
 const MOEX_TIMEZONE = 'Europe/Moscow'
 
+/** Поддерживаемые ТФ (Alor tf в секундах: 1 / 5 / 15 / 60 / …). */
+const SUPPORTED_RESOLUTIONS = [
+  '1S',
+  '5S',
+  '15S',
+  '1',
+  '5',
+  '15',
+  '60',
+  '240',
+  'D',
+  'W',
+] as ResolutionString[]
+
 const configurationData: DatafeedConfiguration = {
-  supported_resolutions: ['1', '5', '15', '60', '240', 'D', 'W'] as ResolutionString[],
+  supported_resolutions: SUPPORTED_RESOLUTIONS,
   exchanges: [
     { value: 'MOEX', name: 'MOEX', desc: 'Московская биржа' },
     { value: 'SPBX', name: 'SPBX', desc: 'СПБ Биржа' },
@@ -151,10 +169,12 @@ function candleTimeToMs(raw: number): number {
 type UnsubscribeFn = () => void | Promise<void>
 
 /**
- * Тонкий datafeed: история getHistory + live BarsGetAndSubscribe (WS).
+ * Datafeed: история + свечи WS + котировки Watchlist (Alor quotes REST/WS).
  */
-export class AlorDatafeed implements IBasicDataFeed {
+export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
   private readonly subscriptions = new Map<string, UnsubscribeFn[]>()
+  /** Подписки Quote Session (Watchlist / Details). */
+  private readonly quoteSubscriptions = new Map<string, UnsubscribeFn[]>()
   /** Последняя свеча по ключу symbol|resolution (ms) — чтобы WS не сбрасывал график историей. */
   private readonly lastBarTimeMs = new Map<string, number>()
 
@@ -203,7 +223,40 @@ export class AlorDatafeed implements IBasicDataFeed {
   }
 
   unsubscribeBars(listenerGuid: string): void {
-    const unsubs = this.subscriptions.get(listenerGuid)
+    this.clearUnsubs(this.subscriptions, listenerGuid)
+  }
+
+  /**
+   * Снимок котировок для Watchlist / Details / Legend — Alor REST getQuotes.
+   */
+  getQuotes(symbols: string[], onDataCallback: QuotesCallback, onErrorCallback: QuotesErrorCallback): void {
+    void this.fetchQuotesSnapshot(symbols, onDataCallback, onErrorCallback)
+  }
+
+  /**
+   * Live-котировки Watchlist — Alor WS QuotesSubscribe.
+   */
+  subscribeQuotes(
+    symbols: string[],
+    fastSymbols: string[],
+    onRealtimeCallback: QuotesCallback,
+    listenerGUID: string,
+  ): void {
+    const subState = { cancelled: false }
+    this.quoteSubscriptions.set(listenerGUID, [
+      () => {
+        subState.cancelled = true
+      },
+    ])
+    void this.startQuotesSubscription(symbols, fastSymbols, onRealtimeCallback, listenerGUID, subState)
+  }
+
+  unsubscribeQuotes(listenerGUID: string): void {
+    this.clearUnsubs(this.quoteSubscriptions, listenerGUID)
+  }
+
+  private clearUnsubs(store: Map<string, UnsubscribeFn[]>, listenerGuid: string): void {
+    const unsubs = store.get(listenerGuid)
     if (!unsubs) {
       return
     }
@@ -214,11 +267,130 @@ export class AlorDatafeed implements IBasicDataFeed {
         // ignore
       }
     }
-    this.subscriptions.delete(listenerGuid)
+    store.delete(listenerGuid)
   }
 
   private barKey(symbol: string, resolution: ResolutionString): string {
     return `${symbol}|${resolution}`
+  }
+
+  /**
+   * REST-снимок: GET /md/v2/Securities/{MOEX:SBER,...}/quotes
+   */
+  private async fetchQuotesSnapshot(
+    symbols: string[],
+    onDataCallback: QuotesCallback,
+    onErrorCallback: QuotesErrorCallback,
+  ): Promise<void> {
+    try {
+      const api = await ensureAlorAccessToken()
+      const unique = [...new Set(symbols.map((s) => s.trim()).filter(Boolean))]
+      if (unique.length === 0) {
+        onDataCallback([])
+        return
+      }
+
+      const alorKeys = unique.map((chartName) => {
+        const code = bareSymbol(chartName)
+        const exchange = resolveExchange(chartName)
+        return { chartName, code, exchange, wire: `${exchange}:${code}` }
+      })
+
+      const raw = await api.instruments.getQuotes({
+        symbols: alorKeys.map((k) => k.wire).join(','),
+        format: 'Simple',
+      })
+      const list = Array.isArray(raw) ? raw : []
+
+      const byWire = new Map<string, (typeof list)[number]>()
+      for (const row of list) {
+        const code = String(row.symbol ?? '').trim()
+        const ex = String(row.exchange ?? 'MOEX').toUpperCase()
+        if (code) {
+          byWire.set(`${ex}:${code}`, row)
+          byWire.set(code, row)
+        }
+      }
+
+      onDataCallback(
+        alorKeys.map(({ chartName, code, wire }) =>
+          mapAlorSymbolToQuote(chartName, byWire.get(wire) ?? byWire.get(code)),
+        ),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      onErrorCallback(message)
+    }
+  }
+
+  /**
+   * WS QuotesSubscribe на каждый тикер; fastSymbols обновляются в том же потоке.
+   */
+  private async startQuotesSubscription(
+    symbols: string[],
+    fastSymbols: string[],
+    onRealtimeCallback: QuotesCallback,
+    listenerGUID: string,
+    subState: { cancelled: boolean },
+  ): Promise<void> {
+    try {
+      const api = await ensureAlorAccessToken()
+      if (subState.cancelled) {
+        return
+      }
+
+      const unique = [...new Set([...symbols, ...fastSymbols].map((s) => s.trim()).filter(Boolean))]
+      // Сразу отдать REST-снимок, чтобы Watchlist не ждал первый WS-тик.
+      void this.fetchQuotesSnapshot(unique, onRealtimeCallback, () => undefined)
+
+      const unsubs: UnsubscribeFn[] = []
+      for (const chartName of unique) {
+        const code = bareSymbol(chartName)
+        if (!code || code.includes('/')) {
+          onRealtimeCallback([mapAlorSymbolToQuote(chartName, null)])
+          continue
+        }
+        const exchange = resolveExchange(chartName)
+        try {
+          const unsubscribe = await api.subscriptions.quotes(
+            {
+              code,
+              exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
+              format: Format.Simple,
+            },
+            (data) => {
+              if (subState.cancelled) {
+                return
+              }
+              onRealtimeCallback([mapAlorSymbolToQuote(chartName, data)])
+            },
+          )
+          if (subState.cancelled) {
+            void unsubscribe()
+            return
+          }
+          unsubs.push(() => {
+            subState.cancelled = true
+            return unsubscribe()
+          })
+        } catch (error) {
+          console.warn(`Alor quotes WS: ошибка подписки ${chartName}`, error)
+          onRealtimeCallback([mapAlorSymbolToQuote(chartName, null)])
+        }
+      }
+
+      if (subState.cancelled) {
+        for (const unsub of unsubs) {
+          void unsub()
+        }
+        return
+      }
+
+      const existing = this.quoteSubscriptions.get(listenerGUID) ?? []
+      this.quoteSubscriptions.set(listenerGUID, [...existing, ...unsubs])
+    } catch (error) {
+      console.warn('Alor quotes: ошибка subscribeQuotes', error)
+    }
   }
 
   /**
@@ -360,8 +532,9 @@ export class AlorDatafeed implements IBasicDataFeed {
         has_intraday: true,
         has_daily: true,
         has_seconds: true,
+        seconds_multipliers: ['1', '5', '15'],
         has_weekly_and_monthly: true,
-        supported_resolutions: configurationData.supported_resolutions,
+        supported_resolutions: SUPPORTED_RESOLUTIONS,
         volume_precision: 0,
         data_status: 'streaming',
       }
@@ -400,6 +573,7 @@ export class AlorDatafeed implements IBasicDataFeed {
           code: symbol.includes('/') ? symbol.split('/')[0]!.trim() : symbol,
           exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
           format: Format.Simple,
+          // Alor: tf в секундах (1 / 5 / 15 / 60 / 900 …); типы SDK неполные.
           tf: tf as '15' | '60' | '300' | '3600' | 'D' | 'W' | 'M' | 'Y',
           from: fromSec,
         },
@@ -467,6 +641,7 @@ export class AlorDatafeed implements IBasicDataFeed {
       const result = await api.instruments.getHistory({
         symbol: historySymbol,
         exchange,
+        // Alor: tf в секундах (1 / 5 / 15 / 60 / 900 …); типы SDK неполные.
         tf: tf as '60' | '300' | '3600' | 'D' | 'W' | 'M' | 'Y',
         from: fromSec,
         to: toSec,
