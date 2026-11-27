@@ -6,9 +6,14 @@ import {
   type ArbPair,
 } from '@/arbitrages/arb-pairs'
 import {
+  calcMoexRubfFundingPaymentRub,
+  isMoexRubfTicker,
+} from '@/arbitrages/moex-rubf-funding'
+import {
   calcSpreadMovePnlRub,
   calcSpreadPointValueRub,
 } from '@/arbitrages/moex-iss-margin'
+import { useLegFunding } from '@/arbitrages/useLegFunding'
 import { useLegMargins } from '@/arbitrages/useLegMargins'
 
 /** Смещение стоп/тейк по умолчанию, % от текущего спреда. */
@@ -37,6 +42,12 @@ export function ArbSpreadDetailsCard({
   const [stopInput, setStopInput] = useState('')
   const seededPairId = useRef<string | null>(null)
   const { marginByCode, volumeByCode, loading, error } = useLegMargins(codes)
+  const {
+    fundingPerLotByCode,
+    hasRubf,
+    loading: fundingLoading,
+    error: fundingError,
+  } = useLegFunding(codes)
 
   useEffect(() => {
     setBaseLots(pair.defaultBaseLots)
@@ -169,6 +180,68 @@ export function ArbSpreadDetailsCard({
         </div>
       </div>
 
+      {hasRubf ? (
+        <div className="mt-3 space-y-1.5">
+          <div className="text-[11px] font-medium text-[rgb(209,212,220)]">
+            Фандинг
+            <span className="ml-1 font-normal text-muted-foreground">
+              (индикативный · на объём позиции)
+            </span>
+          </div>
+          <div className="overflow-hidden rounded border border-[rgba(166,189,213,0.15)]">
+            <div className="grid grid-cols-[minmax(0,1.2fr)_1fr_1fr_1fr] gap-1 bg-[rgba(255,255,255,0.03)] px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <span>Нога</span>
+              <span className="text-right">₽/лот</span>
+              <span className="text-right">Лонг</span>
+              <span className="text-right">Шорт</span>
+            </div>
+            {rows
+              .filter((row) => isMoexRubfTicker(row.code))
+              .map((row) => {
+                const perLot = fundingPerLotByCode[row.code]
+                const longPay =
+                  perLot != null && row.qty > 0
+                    ? calcMoexRubfFundingPaymentRub(perLot, 'long', row.qty)
+                    : null
+                const shortPay =
+                  perLot != null && row.qty > 0
+                    ? calcMoexRubfFundingPaymentRub(perLot, 'short', row.qty)
+                    : null
+                return (
+                  <div
+                    key={`fund-${row.code}`}
+                    className="grid grid-cols-[minmax(0,1.2fr)_1fr_1fr_1fr] gap-1 border-t border-[rgba(166,189,213,0.08)] px-2 py-1.5 text-[12px]"
+                  >
+                    <span className="truncate font-medium text-[rgb(209,212,220)]" title={row.code}>
+                      {row.code}
+                    </span>
+                    <span className="text-right tabular-nums text-[rgb(209,212,220)]">
+                      {fundingLoading && perLot == null ? '…' : formatFundingRub(perLot)}
+                    </span>
+                    <span
+                      className={`text-right tabular-nums ${fundingToneClass(longPay)}`}
+                    >
+                      {fundingLoading && longPay == null ? '…' : formatSignedRub(longPay)}
+                    </span>
+                    <span
+                      className={`text-right tabular-nums ${fundingToneClass(shortPay)}`}
+                    >
+                      {fundingLoading && shortPay == null ? '…' : formatSignedRub(shortPay)}
+                    </span>
+                  </div>
+                )
+              })}
+          </div>
+          {fundingError ? (
+            <div className="text-[11px] text-[#f23645]">Не удалось загрузить фандинг: {fundingError}</div>
+          ) : (
+            <div className="text-[10px] text-muted-foreground">
+              + ставка: лонг платит / шорт получает · ISS SWAPRATE · USD/EUR до ~18:00 МСК часто 0
+            </div>
+          )}
+        </div>
+      ) : null}
+
       <div className="mt-3 space-y-2">
         <div className="text-[11px] font-medium text-[rgb(209,212,220)]">
           Стоп / тейк
@@ -274,6 +347,24 @@ function formatSignedRub(value: number | null): string {
   const rounded = Math.round(value)
   const sign = rounded > 0 ? '+' : ''
   return `${sign}${rounded.toLocaleString('ru-RU')} ₽`
+}
+
+/** ₽/лот фандинга с копейками. */
+function formatFundingRub(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) {
+    return '—'
+  }
+  return `${value.toLocaleString('ru-RU', {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  })} ₽`
+}
+
+function fundingToneClass(value: number | null): string {
+  if (value == null || value === 0) {
+    return 'text-[rgb(209,212,220)]'
+  }
+  return value > 0 ? 'text-[#22ab94]' : 'text-[#f23645]'
 }
 
 function formatLevel(value: number): string {
