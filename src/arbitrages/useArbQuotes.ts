@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Exchange, Format, type Symbol as AlorSymbol } from 'alor-api'
-import { ensureAlorAccessToken, getAlorRefreshToken } from '@/api/alor-client'
+import type { Symbol as AlorSymbol } from 'alor-api'
+import { fetchAlorQuotesSnapshot, subscribeAlorQuotes } from '@/api/alor-quotes-hub'
+import { getAlorRefreshToken } from '@/api/alor-client'
 import {
   buildCompositeQuoteRow,
   parseArbTickerCodes,
@@ -9,7 +10,7 @@ import {
 import type { ArbPair } from '@/arbitrages/arb-pairs'
 
 /**
- * Live-котировки арбитражных спредов: WS quotes на ноги → композит (L/R)×step.
+ * Live-котировки арбитражных спредов: общий hub quotes на ноги → композит.
  */
 export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
   const tickersKey = useMemo(() => pairs.map((p) => p.ticker).join('|'), [pairs])
@@ -22,10 +23,8 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
     }
 
     let cancelled = false
-    const unsubs: Array<() => void | Promise<void>> = []
-    /** Последние котировки ног по коду. */
+    const unsubs: Array<() => void> = []
     const legs = new Map<string, AlorSymbol>()
-    /** ticker → коды ног */
     const pairCodes = new Map<string, string[]>()
 
     for (const pair of pairs) {
@@ -50,23 +49,14 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
 
     void (async () => {
       try {
-        const api = await ensureAlorAccessToken()
-        if (cancelled) {
-          return
-        }
-
         if (codes.length > 0) {
           try {
-            const raw = await api.instruments.getQuotes({
-              symbols: codes.map((c) => `MOEX:${c}`).join(','),
-              format: 'Simple',
-            })
-            const list = Array.isArray(raw) ? raw : []
-            for (const row of list) {
-              const code = String(row.symbol ?? '').trim()
-              if (code) {
-                legs.set(code, row)
-              }
+            const snapshot = await fetchAlorQuotesSnapshot(codes, 'MOEX')
+            if (cancelled) {
+              return
+            }
+            for (const [code, row] of snapshot) {
+              legs.set(code, row)
             }
             emitAll()
           } catch (error) {
@@ -75,31 +65,20 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
         }
 
         for (const code of codes) {
-          try {
-            const unsubscribe = await api.subscriptions.quotes(
-              {
-                code,
-                exchange: Exchange.MOEX,
-                format: Format.Simple,
-              },
-              (data) => {
-                if (cancelled || !data) {
-                  return
-                }
-                const sym = String(data.symbol ?? code).trim() || code
-                legs.set(sym, data)
-                legs.set(code, data)
-                emitAll()
-              },
-            )
-            if (cancelled) {
-              void unsubscribe()
-              return
-            }
-            unsubs.push(() => unsubscribe())
-          } catch (error) {
-            console.warn(`Arb quotes WS ${code}:`, error)
+          if (cancelled) {
+            return
           }
+          unsubs.push(
+            subscribeAlorQuotes(code, 'MOEX', (data) => {
+              if (cancelled || !data) {
+                return
+              }
+              const sym = String(data.symbol ?? code).trim() || code
+              legs.set(sym, data)
+              legs.set(code, data)
+              emitAll()
+            }),
+          )
         }
       } catch (error) {
         console.warn('Arb quotes: ошибка подписки', error)
@@ -109,7 +88,7 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
     return () => {
       cancelled = true
       for (const unsub of unsubs) {
-        void unsub()
+        unsub()
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

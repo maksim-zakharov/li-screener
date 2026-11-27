@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type {
   ChartingLibraryFeatureset,
+  IBrokerTerminal,
   IChartingLibraryWidget,
   LanguageCode,
   ResolutionString,
@@ -8,10 +9,15 @@ import type {
   TradingTerminalFeatureset,
   TradingTerminalWidgetOptions,
 } from '@/assets/charting_library'
-import { widget } from '@/assets/charting_library'
+import { TradedGroupHorizontalAlignment, widget } from '@/assets/charting_library'
 import { ALOR_TOKEN_CHANGED_EVENT, getAlorRefreshToken } from '@/api/alor-client'
 import { AlorTokenSetupGuide } from '@/components/AlorTokenSetupGuide'
 import { AlorDatafeed } from '@/chart/alor-datafeed'
+import {
+  ARB_READONLY_BROKER_CONFIG,
+  createArbReadonlyBroker,
+  type ArbReadonlyBroker,
+} from '@/chart/arb-readonly-broker'
 import { createLocalChartSaveLoadAdapter } from '@/chart/chart-save-load-adapter'
 import { CHARTING_LIBRARY_PATH } from '@/lib/charting-library-path'
 
@@ -29,8 +35,8 @@ interface AlorChartProps {
 }
 
 /**
- * Полный UI графика. Выключен только торговый broker-UI —
- * broker_factory не подключён.
+ * Полный UI графика. Broker — только линии позиций (read-only),
+ * торговый UI выключен.
  */
 const DISABLED_FEATURES: TradingTerminalFeatureset[] = [
   'widget_logo' as ChartingLibraryFeatureset as TradingTerminalFeatureset,
@@ -43,6 +49,7 @@ const DISABLED_FEATURES: TradingTerminalFeatureset[] = [
   'trading_notifications',
   'show_trading_notifications_history',
   'show_order_panel_on_start',
+  'dom_widget',
 ]
 
 const ENABLED_FEATURES: TradingTerminalFeatureset[] = [
@@ -135,6 +142,7 @@ export function AlorChart({
 }: AlorChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const widgetRef = useRef<IChartingLibraryWidget | null>(null)
+  const brokerRef = useRef<ArbReadonlyBroker | null>(null)
   const propsRef = useRef({ symbol, interval, locale, showWidgetBar })
   propsRef.current = { symbol, interval, locale, showWidgetBar }
   /** Поколение setSymbol — отсекает устаревшие async-ответы (ready / load_last_chart / клик). */
@@ -205,6 +213,13 @@ export function AlorChart({
       overrides: {
         'paneProperties.background': 'rgb(16,16,20)',
         'paneProperties.backgroundType': 'solid',
+        'tradingProperties.showPositions': true,
+        'tradingProperties.positionPL.visibility': true,
+        'tradingProperties.extendLeft': true,
+        'tradingProperties.lineLength': 50,
+        /** PnL/qty бейдж по центру линии, не справа. */
+        'tradingProperties.horizontalAlignment': TradedGroupHorizontalAlignment.Center,
+        'tradingProperties.showReverse': false,
       },
       loading_screen: {
         backgroundColor: 'rgb(16,16,20)',
@@ -224,6 +239,12 @@ export function AlorChart({
         news: false,
         datawindow: widgetBarOn,
       },
+      broker_config: ARB_READONLY_BROKER_CONFIG,
+      broker_factory: (host): IBrokerTerminal => {
+        const broker = createArbReadonlyBroker(host)
+        brokerRef.current = broker
+        return broker
+      },
     }
 
     let chartWidget: IChartingLibraryWidget
@@ -239,6 +260,17 @@ export function AlorChart({
     chartWidget.onChartReady(() => {
       if (widgetRef.current !== chartWidget) {
         return
+      }
+      try {
+        chartWidget.applyOverrides({
+          'tradingProperties.horizontalAlignment': TradedGroupHorizontalAlignment.Center,
+          'tradingProperties.lineLength': 50,
+          'tradingProperties.extendLeft': true,
+          'tradingProperties.positionPL.visibility': true,
+          'tradingProperties.showReverse': false,
+        })
+      } catch {
+        // ignore
       }
       try {
         chartWidget.activeChart().getTimezoneApi().setTimezone('Europe/Moscow')
@@ -272,6 +304,12 @@ export function AlorChart({
 
     return () => {
       setSymbolGenRef.current += 1
+      try {
+        brokerRef.current?.destroy()
+      } catch {
+        // ignore
+      }
+      brokerRef.current = null
       try {
         chartWidget.remove()
       } catch {

@@ -10,6 +10,7 @@ import {
   type ArbListId,
   type ArbPair,
 } from '@/arbitrages/arb-pairs'
+import { loadArbPositions } from '@/arbitrages/arb-positions'
 import { useArbQuotes } from '@/arbitrages/useArbQuotes'
 import { AlorChart } from '@/components/AlorChart'
 import { ArbitragesList } from '@/components/ArbitragesList'
@@ -44,12 +45,33 @@ export function ArbitragesPage() {
   const [mobileTab, setMobileTab] = useState<ArbMobileTab>('chart')
   const [listId, setListId] = useState<ArbListId>(DEFAULT_ARB_LIST)
   const [searchParams, setSearchParams] = useSearchParams()
-  const quotes = useArbQuotes(ARB_PAIRS)
   const selected = useMemo(
     () => resolvePairFromQuery(searchParams.get(TICKER_QUERY)),
     [searchParams],
   )
   const visiblePairs = ARB_PAIRS_BY_LIST[listId]
+  /**
+   * Quotes только для открытого списка (+ выбранный спред и тикеры позиций).
+   * Раньше ARB_PAIRS подписывал forex+stocks сразу.
+   */
+  const quotePairs = useMemo(() => {
+    const byTicker = new Map<string, ArbPair>()
+    for (const pair of visiblePairs) {
+      byTicker.set(pair.ticker, pair)
+    }
+    byTicker.set(selected.ticker, selected)
+    for (const pos of loadArbPositions()) {
+      if (byTicker.has(pos.ticker)) {
+        continue
+      }
+      const pair = ARB_PAIRS.find((item) => item.ticker === pos.ticker)
+      if (pair) {
+        byTicker.set(pair.ticker, pair)
+      }
+    }
+    return [...byTicker.values()]
+  }, [visiblePairs, selected])
+  const quotes = useArbQuotes(quotePairs)
 
   /** Нет/битый ticker в query → пишем актуальный (replace). */
   useEffect(() => {

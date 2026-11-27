@@ -9,8 +9,11 @@ import {
   computeCompositePriceFromLegPrices,
   createArbPositionId,
   defaultLegQtys,
+  normalizeArbExitPrice,
+  resolvePositionSide,
   type ArbPosition,
   type ArbPositionLeg,
+  type ArbPositionSide,
 } from '@/arbitrages/arb-positions'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,6 +26,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
@@ -36,10 +41,12 @@ interface AddArbPositionDialogProps {
   open: boolean
   /** Закрытие */
   onOpenChange: (open: boolean) => void
-  /** Спред по умолчанию (текущий на графике) */
+  /** Спред по умолчанию (текущий на графике) — для создания */
   defaultTicker?: string
-  /** Добавление позиции */
-  onAdd: (position: ArbPosition) => void
+  /** Редактируемая позиция (null/undefined = создание) */
+  editingPosition?: ArbPosition | null
+  /** Сохранение (создать или обновить) */
+  onSave: (position: ArbPosition) => void
 }
 
 interface LegDraft {
@@ -52,31 +59,52 @@ interface LegDraft {
 }
 
 /**
- * Модалка: выбор спреда + avg/объём по ногам → позиция.
+ * Модалка: создание / редактирование позиции (спред, направление, avg/объём ног).
  */
 export function AddArbPositionDialog({
   open,
   onOpenChange,
   defaultTicker,
-  onAdd,
+  editingPosition,
+  onSave,
 }: AddArbPositionDialogProps) {
-  const initialPair = useMemo(
-    () => resolvePair(defaultTicker) ?? ARB_PAIRS[0]!,
-    [defaultTicker],
-  )
+  const isEdit = editingPosition != null
+  const initialPair = useMemo(() => {
+    if (editingPosition) {
+      return resolvePair(editingPosition.ticker) ?? ARB_PAIRS[0]!
+    }
+    return resolvePair(defaultTicker) ?? ARB_PAIRS[0]!
+  }, [defaultTicker, editingPosition])
+
   const [ticker, setTicker] = useState(initialPair.ticker)
+  const [side, setSide] = useState<ArbPositionSide>('buy')
   const [legs, setLegs] = useState<LegDraft[]>(() => buildLegDrafts(initialPair))
+  const [takeProfit, setTakeProfit] = useState('')
+  const [stopLoss, setStopLoss] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) {
       return
     }
+    if (editingPosition) {
+      const pair = resolvePair(editingPosition.ticker) ?? ARB_PAIRS[0]!
+      setTicker(pair.ticker)
+      setSide(resolvePositionSide(editingPosition))
+      setLegs(buildLegDraftsFromPosition(pair, editingPosition))
+      setTakeProfit(formatExitInput(editingPosition.takeProfit))
+      setStopLoss(formatExitInput(editingPosition.stopLoss))
+      setError(null)
+      return
+    }
     const pair = resolvePair(defaultTicker) ?? ARB_PAIRS[0]!
     setTicker(pair.ticker)
+    setSide('buy')
     setLegs(buildLegDrafts(pair))
+    setTakeProfit('')
+    setStopLoss('')
     setError(null)
-  }, [open, defaultTicker])
+  }, [open, defaultTicker, editingPosition])
 
   const onTickerChange = (nextTicker: string) => {
     setTicker(nextTicker)
@@ -130,12 +158,25 @@ export function AddArbPositionDialog({
       setError('Не удалось посчитать среднюю спреда')
       return
     }
-    onAdd({
-      id: createArbPositionId(),
+    const tp = takeProfit.trim() ? normalizeArbExitPrice(takeProfit) : null
+    if (takeProfit.trim() && tp == null) {
+      setError('Укажите корректную цену тейка')
+      return
+    }
+    const sl = stopLoss.trim() ? normalizeArbExitPrice(stopLoss) : null
+    if (stopLoss.trim() && sl == null) {
+      setError('Укажите корректную цену стопа')
+      return
+    }
+    onSave({
+      id: editingPosition?.id ?? createArbPositionId(),
       ticker: pair.ticker,
+      side,
       legs: parsedLegs,
       avgSpread,
-      createdAt: Date.now(),
+      takeProfit: tp,
+      stopLoss: sl,
+      createdAt: editingPosition?.createdAt ?? Date.now(),
     })
     onOpenChange(false)
   }
@@ -144,9 +185,11 @@ export function AddArbPositionDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Добавить позицию</DialogTitle>
+          <DialogTitle>{isEdit ? 'Редактировать позицию' : 'Добавить позицию'}</DialogTitle>
           <DialogDescription>
-            Выберите спред и укажите среднюю цену и объём по каждой ноге.
+            {isEdit
+              ? 'Измените направление, средние, объёмы ног, тейк и стоп.'
+              : 'Выберите спред, направление, средние/объёмы ног; при необходимости тейк и стоп.'}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-4">
@@ -165,6 +208,28 @@ export function AddArbPositionDialog({
               </SelectContent>
             </Select>
           </label>
+
+          <div className="flex flex-col gap-1.5 text-sm">
+            <span className="text-muted-foreground">Направление</span>
+            <RadioGroup
+              value={side}
+              onValueChange={(value) => setSide(value === 'sell' ? 'sell' : 'buy')}
+              className="flex flex-row gap-4"
+            >
+              <label className="flex cursor-pointer items-center gap-2">
+                <RadioGroupItem value="buy" id="arb-side-buy" />
+                <Label htmlFor="arb-side-buy" className="cursor-pointer font-normal">
+                  Лонг
+                </Label>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <RadioGroupItem value="sell" id="arb-side-sell" />
+                <Label htmlFor="arb-side-sell" className="cursor-pointer font-normal">
+                  Шорт
+                </Label>
+              </label>
+            </RadioGroup>
+          </div>
 
           <div className="space-y-3">
             {legs.map((leg, index) => (
@@ -210,6 +275,35 @@ export function AddArbPositionDialog({
             <span className="tabular-nums font-medium">{formatArbNumber(previewAvg, 3)}</span>
           </div>
 
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Тейк (TP)
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min={0}
+                value={takeProfit}
+                onChange={(e) => setTakeProfit(e.target.value)}
+                placeholder="—"
+                className="h-8"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+              Стоп (SL)
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                min={0}
+                value={stopLoss}
+                onChange={(e) => setStopLoss(e.target.value)}
+                placeholder="—"
+                className="h-8"
+              />
+            </label>
+          </div>
+
           {error ? <div className="text-sm text-[#f23645]">{error}</div> : null}
         </DialogBody>
         <DialogFooter className="px-5 pb-5">
@@ -217,7 +311,7 @@ export function AddArbPositionDialog({
             Отмена
           </Button>
           <Button type="button" onClick={onSubmit}>
-            Добавить
+            {isEdit ? 'Сохранить' : 'Добавить'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -240,4 +334,26 @@ function buildLegDrafts(pair: ArbPair): LegDraft[] {
     avgPrice: '',
     qty: String(qtys[index] ?? 1),
   }))
+}
+
+function buildLegDraftsFromPosition(pair: ArbPair, position: ArbPosition): LegDraft[] {
+  const codes = arbPairLegCodes(pair)
+  const byCode = new Map(position.legs.map((leg) => [leg.code, leg]))
+  const defaults = defaultLegQtys(pair)
+  return codes.map((code, index) => {
+    const existing = byCode.get(code)
+    return {
+      code,
+      avgPrice: existing ? String(existing.avgPrice) : '',
+      qty: existing ? String(existing.qty) : String(defaults[index] ?? 1),
+    }
+  })
+}
+
+/** Строка инпута для сохранённого TP/SL. */
+function formatExitInput(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value <= 0) {
+    return ''
+  }
+  return String(value)
 }

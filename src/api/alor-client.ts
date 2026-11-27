@@ -64,9 +64,7 @@ export function setAlorRefreshToken(token: string | null): void {
 /**
  * Синглтон AlorApi. Токен — `localStorage.token`.
  * При смене токена пересоздаёт клиент.
- *
- * Auth refresh в web — через SharedWorker (шаринг между вкладками);
- * tab fallback — proactive `refreshToken()` если SW недоступен.
+ * Auth/WS — во вкладке (SharedWorker выключен).
  */
 export function getAlorApi(): AlorApi {
   const token = getAlorRefreshToken()
@@ -75,7 +73,9 @@ export function getAlorApi(): AlorApi {
   }
 
   bindAccessTokenListener()
-  warmAlorSharedWorker()
+  if (isAlorSharedEnabled()) {
+    warmAlorSharedWorker()
+  }
 
   if (!alorApi || boundToken !== token) {
     const savedAccess = localStorage.getItem('accessToken')?.trim() || undefined
@@ -93,7 +93,6 @@ export function getAlorApi(): AlorApi {
       alorApi.accessToken = savedAccess
       alorApi.http.defaults.headers.common['Authorization'] = `Bearer ${savedAccess}`
     }
-    // После 401 interceptor кладёт новый access сюда — сохраняем + в SW.
     alorApi.onAuthCallback = (accessToken: string) => {
       if (accessToken) {
         localStorage.setItem('accessToken', accessToken)
@@ -108,9 +107,7 @@ export function getAlorApi(): AlorApi {
 }
 
 /**
- * Готовит AlorApi с валидным access.
- * При SharedWorker access обновляется из worker (`authUpdated`);
- * без SW — tab refresh как раньше.
+ * Готовит AlorApi с валидным access (refresh во вкладке).
  */
 export async function ensureAlorAccessToken(): Promise<AlorApi> {
   const api = getAlorApi()
@@ -119,19 +116,16 @@ export async function ensureAlorAccessToken(): Promise<AlorApi> {
     !token || isAlorJwtExpiringSoon(token)
 
   if (isAlorSharedEnabled()) {
-    // SW сам refresh'ит; ждём свежий access из localStorage / события.
     const access = localStorage.getItem('accessToken')?.trim()
     if (!needsRefresh(access)) {
       api.accessToken = access!
       api.http.defaults.headers.common['Authorization'] = `Bearer ${access}`
       return api
     }
-    // Форсим sync — worker сделает ensureAccessToken.
     syncAlorSharedAuth({
       refreshToken: getAlorRefreshToken(),
       accessToken: access ?? null,
     })
-    // Короткое ожидание authUpdated (до 1.5с).
     const fresh = await waitForAccessToken(1500)
     if (fresh && !needsRefresh(fresh)) {
       api.accessToken = fresh

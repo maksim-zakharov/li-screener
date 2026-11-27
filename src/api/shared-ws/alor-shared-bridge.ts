@@ -1,5 +1,8 @@
 /**
  * Tab ↔ SharedWorker bridge для Alor (auth / REST / WS).
+ *
+ * Сейчас SharedWorker выключен — весь Alor (auth/REST/WS) идёт во вкладке.
+ * Код bridge оставлен: включить → `ALOR_USE_SHARED_WORKER = true`.
  */
 import {
   ALOR_SHARED_WORKER_NAME,
@@ -13,6 +16,9 @@ import {
   type AlorSharedTabMessage,
   type AlorSharedWorkerMessage,
 } from './alor-shared-protocol'
+
+/** `false` — Alor только во вкладке (без SharedWorker). */
+const ALOR_USE_SHARED_WORKER = false
 
 interface PendingRpc {
   resolve: (data: unknown) => void
@@ -39,6 +45,7 @@ let readyTimeoutId: ReturnType<typeof setTimeout> | null = null
 const READY_TIMEOUT_MS = 4000
 
 function canUseSharedWorker(): boolean {
+  if (!ALOR_USE_SHARED_WORKER) return false
   if (typeof window === 'undefined') return false
   if (typeof SharedWorker === 'undefined') return false
   return true

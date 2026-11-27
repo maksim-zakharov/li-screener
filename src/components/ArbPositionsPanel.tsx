@@ -2,10 +2,16 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { formatArbNumber, type ArbQuoteRow } from '@/arbitrages/arb-quote'
 import {
+  setArbBrokerChartPositions,
+  type ArbBrokerChartPosition,
+} from '@/arbitrages/arb-broker-positions.store'
+import {
   calcPositionLivePnl,
   formatPositionLots,
+  formatPositionSide,
   loadArbPositions,
   resolvePositionAvgSpread,
+  resolvePositionSide,
   saveArbPositions,
   type ArbPosition,
   type ArbPositionPnl,
@@ -34,6 +40,7 @@ interface ArbPositionsPanelProps {
 
 /**
  * Таблица позиций — разметка как PositionsWidget; PnL от live last как в списке спредов.
+ * Клик по строке — редактирование.
  */
 export function ArbPositionsPanel({
   selectedTicker,
@@ -42,10 +49,17 @@ export function ArbPositionsPanel({
 }: ArbPositionsPanelProps) {
   const [positions, setPositions] = useState<ArbPosition[]>(() => loadArbPositions())
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingPosition, setEditingPosition] = useState<ArbPosition | null>(null)
 
   useEffect(() => {
     saveArbPositions(positions)
   }, [positions])
+
+  useEffect(() => {
+    return () => {
+      setArbBrokerChartPositions([])
+    }
+  }, [])
 
   const marginCodes = useMemo(() => {
     const codes = new Set<string>()
@@ -60,8 +74,33 @@ export function ArbPositionsPanel({
 
   const { volumeByCode } = useLegMargins(marginCodes)
 
-  const onAdd = useCallback((position: ArbPosition) => {
-    setPositions((prev) => [position, ...prev])
+  const onDialogOpenChange = useCallback((open: boolean) => {
+    setDialogOpen(open)
+    if (!open) {
+      setEditingPosition(null)
+    }
+  }, [])
+
+  const onOpenCreate = useCallback(() => {
+    setEditingPosition(null)
+    setDialogOpen(true)
+  }, [])
+
+  const onOpenEdit = useCallback((position: ArbPosition) => {
+    setEditingPosition(position)
+    setDialogOpen(true)
+  }, [])
+
+  const onSave = useCallback((position: ArbPosition) => {
+    setPositions((prev) => {
+      const index = prev.findIndex((row) => row.id === position.id)
+      if (index >= 0) {
+        const next = [...prev]
+        next[index] = position
+        return next
+      }
+      return [position, ...prev]
+    })
   }, [])
 
   const onRemove = useCallback((id: string) => {
@@ -69,13 +108,46 @@ export function ArbPositionsPanel({
   }, [])
 
   const rows = positions.map((pos) => {
+    const side = resolvePositionSide(pos)
     const avgSpread = resolvePositionAvgSpread(pos) ?? pos.avgSpread
     const current = quotes[pos.ticker]?.last ?? null
     const refLeg = pos.legs[pos.legs.length - 1]
     const refVolume = refLeg ? (volumeByCode[refLeg.code] ?? null) : null
-    const pnl = calcPositionLivePnl(avgSpread, current, refVolume, refLeg?.qty ?? 0)
-    return { pos, avgSpread, current, pnl }
+    const refLots = refLeg?.qty ?? 0
+    const pnl = calcPositionLivePnl(avgSpread, current, refVolume, refLots, side)
+    const takeProfit = normalizeOptionalPrice(pos.takeProfit)
+    const stopLoss = normalizeOptionalPrice(pos.stopLoss)
+    const tpPnl =
+      takeProfit != null ? calcPositionLivePnl(avgSpread, takeProfit, refVolume, refLots, side) : null
+    const slPnl =
+      stopLoss != null ? calcPositionLivePnl(avgSpread, stopLoss, refVolume, refLots, side) : null
+    return { pos, side, avgSpread, current, pnl, takeProfit, stopLoss, tpPnl, slPnl }
   })
+
+  useEffect(() => {
+    const chartPositions: ArbBrokerChartPosition[] = positions.map((pos) => {
+      const side = resolvePositionSide(pos)
+      const avgSpread = resolvePositionAvgSpread(pos) ?? pos.avgSpread
+      const current = quotes[pos.ticker]?.last ?? null
+      const refLeg = pos.legs[pos.legs.length - 1]
+      const refVolume = refLeg ? (volumeByCode[refLeg.code] ?? null) : null
+      const pnl = calcPositionLivePnl(avgSpread, current, refVolume, refLeg?.qty ?? 0, side)
+      const qty = pos.legs[0]?.qty ?? 1
+      const takeProfit = normalizeOptionalPrice(pos.takeProfit)
+      const stopLoss = normalizeOptionalPrice(pos.stopLoss)
+      return {
+        id: pos.id,
+        symbol: pos.ticker,
+        qty: qty > 0 ? qty : 1,
+        avgPrice: avgSpread,
+        side,
+        ...(pnl?.kind === 'rub' ? { pl: pnl.value } : {}),
+        ...(takeProfit != null ? { takeProfit } : {}),
+        ...(stopLoss != null ? { stopLoss } : {}),
+      }
+    })
+    setArbBrokerChartPositions(chartPositions)
+  }, [positions, quotes, volumeByCode])
 
   const rubPnls = rows.map((row) => (row.pnl?.kind === 'rub' ? row.pnl.value : null))
   const hasRubTotal = rubPnls.some((value) => value != null)
@@ -86,7 +158,7 @@ export function ArbPositionsPanel({
       <Table wrapperClassName="min-h-0 flex-1 overflow-auto pt-1">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[200px] text-left" colSpan={6}>
+            <TableHead className="w-[200px] text-left" colSpan={COLUMN_COUNT}>
               <div className="flex items-center justify-between">
                 <span>Позиции</span>
                 <Button
@@ -94,7 +166,7 @@ export function ArbPositionsPanel({
                   variant="outline"
                   size="xs"
                   className="h-6 text-[10px]"
-                  onClick={() => setDialogOpen(true)}
+                  onClick={onOpenCreate}
                 >
                   Добавить позицию
                 </Button>
@@ -105,22 +177,25 @@ export function ArbPositionsPanel({
         <TableHeader>
           <TableRow>
             <TableHead className="w-[200px]">Спред</TableHead>
+            <TableHead className="text-right">Напр.</TableHead>
             <TableHead className="text-right">Средняя</TableHead>
             <TableHead className="text-right">Текущая</TableHead>
             <TableHead className="text-right">Лотность</TableHead>
             <TableHead className="text-right">PnL</TableHead>
+            <TableHead className="text-right">TP</TableHead>
+            <TableHead className="text-right">SL</TableHead>
             <TableHead className="text-right">Действия</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {positions.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center text-[11px] text-foreground">
+              <TableCell colSpan={COLUMN_COUNT} className="text-center text-[11px] text-foreground">
                 Нет позиций
               </TableCell>
             </TableRow>
           ) : (
-            rows.map(({ pos, avgSpread, current, pnl }) => {
+            rows.map(({ pos, side, avgSpread, current, pnl, takeProfit, stopLoss, tpPnl, slPnl }) => {
               const dir = pnl == null || pnl.value === 0 ? 0 : pnl.value > 0 ? 1 : -1
               const dirClass = dir > 0 ? 'profitCell' : dir < 0 ? 'lossCell' : ''
               const currentClass =
@@ -129,15 +204,23 @@ export function ArbPositionsPanel({
                   : current > avgSpread
                     ? 'profitCell'
                     : 'lossCell'
+              const sideClass = side === 'buy' ? 'profitCell' : 'lossCell'
 
               return (
-                <TableRow key={pos.id}>
+                <TableRow
+                  key={pos.id}
+                  className="cursor-pointer"
+                  onClick={() => onOpenEdit(pos)}
+                >
                   <TableCell className="pl-1.5">
                     <div className="flex flex-col">
                       <span className="max-w-[220px] truncate font-medium" title={pos.ticker}>
                         {pos.ticker}
                       </span>
                     </div>
+                  </TableCell>
+                  <TableCell className={cn('text-right tabular-nums', sideClass)}>
+                    {formatPositionSide(side)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {formatArbNumber(avgSpread, 3)}
@@ -151,13 +234,22 @@ export function ArbPositionsPanel({
                   <TableCell className={cn('text-right tabular-nums', dirClass)}>
                     {formatLivePnl(pnl)}
                   </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {renderExitLevelCell(takeProfit, tpPnl, 'tp')}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {renderExitLevelCell(stopLoss, slPnl, 'sl')}
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button
                       type="button"
                       variant="outline"
                       size="xs"
                       className="h-6 text-[10px]"
-                      onClick={() => onRemove(pos.id)}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onRemove(pos.id)
+                      }}
                     >
                       Закрыть
                     </Button>
@@ -170,7 +262,7 @@ export function ArbPositionsPanel({
         {positions.length > 0 ? (
           <TableFooter>
             <TableRow>
-              <TableCell colSpan={4} className="text-right font-medium">
+              <TableCell colSpan={5} className="text-right font-medium">
                 Итого PnL
               </TableCell>
               <TableCell
@@ -185,7 +277,7 @@ export function ArbPositionsPanel({
               >
                 {hasRubTotal ? formatPnlRub(totalRub) : '—'}
               </TableCell>
-              <TableCell />
+              <TableCell colSpan={3} />
             </TableRow>
           </TableFooter>
         ) : null}
@@ -193,13 +285,16 @@ export function ArbPositionsPanel({
 
       <AddArbPositionDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={onDialogOpenChange}
         defaultTicker={selectedTicker}
-        onAdd={onAdd}
+        editingPosition={editingPosition}
+        onSave={onSave}
       />
     </section>
   )
 }
+
+const COLUMN_COUNT = 9
 
 function formatLivePnl(pnl: ArbPositionPnl | null): string {
   if (pnl == null) {
@@ -219,4 +314,35 @@ function formatPnlRub(value: number): string {
   const rounded = Math.round(value)
   const sign = rounded > 0 ? '+' : ''
   return `${sign}${rounded.toLocaleString('ru-RU')} ₽`
+}
+
+/** Положительная цена уровня или null. */
+function normalizeOptionalPrice(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) {
+    return null
+  }
+  return value
+}
+
+/** Ячейка TP/SL: цена + ожидаемый PnL (как в /trading-diary). */
+function renderExitLevelCell(
+  price: number | null,
+  expectedPnl: ArbPositionPnl | null,
+  kind: 'tp' | 'sl',
+) {
+  if (price == null) {
+    return '—'
+  }
+  const priceClass = kind === 'tp' ? 'text-amber-500' : 'text-red-400'
+  const pnlDir =
+    expectedPnl == null || expectedPnl.value === 0 ? 0 : expectedPnl.value > 0 ? 1 : -1
+  const pnlClass = pnlDir > 0 ? 'profitCell' : pnlDir < 0 ? 'lossCell' : ''
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      <span className={priceClass}>{formatArbNumber(price, 3)}</span>
+      {expectedPnl != null ? (
+        <span className={cn('text-[10px]', pnlClass)}>{formatLivePnl(expectedPnl)}</span>
+      ) : null}
+    </div>
+  )
 }

@@ -1,4 +1,4 @@
-import { Exchange, Format } from 'alor-api'
+import { Exchange, Format, type Symbol as AlorSymbol } from 'alor-api'
 import type {
   Bar,
   DatafeedConfiguration,
@@ -9,6 +9,7 @@ import type {
   LibrarySymbolInfo,
   OnReadyCallback,
   PeriodParams,
+  QuoteData,
   QuotesCallback,
   QuotesErrorCallback,
   ResolutionString,
@@ -18,10 +19,12 @@ import type {
   SubscribeBarsCallback,
 } from '@/assets/charting_library'
 import { ensureAlorAccessToken } from '@/api/alor-client'
+import { fetchAlorQuotesSnapshot, subscribeAlorQuotes } from '@/api/alor-quotes-hub'
 import {
   alorSharedRpc,
   alorSharedSubscribe,
 } from '@/api/shared-ws/alor-shared-bridge'
+import { buildCompositeQuoteRow } from '@/arbitrages/arb-quote'
 import { mapAlorSymbolToQuote } from '@/chart/alor-quotes'
 import {
   earliestBarTimeSec,
@@ -182,6 +185,32 @@ function parseComposite(symbol: string) {
   return parseCompositeTickerRaw(symbol, bareSymbol)
 }
 
+/**
+ * QuoteData для спреда: last/change из ног (не дергать Alor с тикером `A/B`).
+ */
+function mapCompositeChartQuote(
+  chartName: string,
+  quotesByCode: Map<string, AlorSymbol | null | undefined>,
+): QuoteData {
+  const row = buildCompositeQuoteRow(chartName, quotesByCode)
+  const prev =
+    row.last != null && row.change != null ? row.last - row.change : row.last ?? undefined
+  return {
+    n: chartName,
+    s: 'ok',
+    v: {
+      short_name: chartName,
+      description: chartName,
+      original_name: chartName,
+      exchange: 'MOEX',
+      ch: row.change ?? 0,
+      chp: row.changePercent ?? 0,
+      ...(row.last != null ? { lp: row.last } : {}),
+      ...(prev != null ? { prev_close_price: prev } : {}),
+    },
+  }
+}
+
 type UnsubscribeFn = () => void | Promise<void>
 type AlorTf = '15' | '60' | '300' | '3600' | 'D' | 'W' | 'M' | 'Y'
 
@@ -292,7 +321,8 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
   }
 
   /**
-   * REST-снимок: GET /md/v2/Securities/{MOEX:SBER,...}/quotes
+   * REST-снимок: GET /md/v2/Securities/quotes?symbols=MOEX:SBER,...
+   * Композиты (`A/B`) — только котировки ног, без path с `/`.
    */
   private async fetchQuotesSnapshot(
     symbols: string[],
@@ -306,44 +336,53 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
         return
       }
 
-      const alorKeys = unique.map((chartName) => {
+      const simple: Array<{ chartName: string; code: string; exchange: string; wire: string }> = []
+      const composites: string[] = []
+      const legCodes = new Set<string>()
+
+      for (const chartName of unique) {
+        const legs = parseComposite(chartName)
+        if (legs && legs.length >= 2) {
+          composites.push(chartName)
+          for (const leg of legs) {
+            legCodes.add(leg.code)
+          }
+          continue
+        }
         const code = bareSymbol(chartName)
+        if (!code || code.includes('/')) {
+          continue
+        }
         const exchange = resolveExchange(chartName)
-        return { chartName, code, exchange, wire: `${exchange}:${code}` }
-      })
+        simple.push({ chartName, code, exchange, wire: `${exchange}:${code}` })
+      }
 
-      const wire = alorKeys.map((k) => k.wire).join(',')
-      const shared = alorSharedRpc<unknown>('getQuotes', { symbols: wire })
-      let raw: unknown
-      if (shared) {
+      const byCode = new Map<string, AlorSymbol>()
+      const restCodes = [
+        ...simple.map((k) => k.code),
+        ...legCodes,
+      ]
+      if (restCodes.length > 0) {
         try {
-          raw = await shared
+          const snapshot = await fetchAlorQuotesSnapshot(restCodes, 'MOEX')
+          for (const [code, row] of snapshot) {
+            byCode.set(code, row)
+            const ex = String(row.exchange ?? 'MOEX').toUpperCase()
+            byCode.set(`${ex}:${code}`, row)
+          }
         } catch (error) {
-          console.warn('Alor SharedWorker getQuotes → tab fallback', error)
-          const api = await ensureAlorAccessToken()
-          raw = await api.instruments.getQuotes({ symbols: wire, format: 'Simple' })
-        }
-      } else {
-        const api = await ensureAlorAccessToken()
-        raw = await api.instruments.getQuotes({ symbols: wire, format: 'Simple' })
-      }
-      const list = Array.isArray(raw) ? raw : []
-
-      const byWire = new Map<string, (typeof list)[number]>()
-      for (const row of list) {
-        const code = String(row.symbol ?? '').trim()
-        const ex = String(row.exchange ?? 'MOEX').toUpperCase()
-        if (code) {
-          byWire.set(`${ex}:${code}`, row)
-          byWire.set(code, row)
+          console.warn('Alor quotes REST snapshot:', error)
         }
       }
 
-      onDataCallback(
-        alorKeys.map(({ chartName, code, wire }) =>
-          mapAlorSymbolToQuote(chartName, byWire.get(wire) ?? byWire.get(code)),
-        ),
-      )
+      const out: QuoteData[] = []
+      for (const { chartName, code, wire } of simple) {
+        out.push(mapAlorSymbolToQuote(chartName, byCode.get(wire) ?? byCode.get(code)))
+      }
+      for (const chartName of composites) {
+        out.push(mapCompositeChartQuote(chartName, byCode))
+      }
+      onDataCallback(out)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       onErrorCallback(message)
@@ -351,7 +390,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
   }
 
   /**
-   * WS QuotesSubscribe на каждый тикер; fastSymbols обновляются в том же потоке.
+   * WS quotes через общий hub (refcount на тикер во вкладке).
    */
   private async startQuotesSubscription(
     symbols: string[],
@@ -366,66 +405,63 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
       }
 
       const unique = [...new Set([...symbols, ...fastSymbols].map((s) => s.trim()).filter(Boolean))]
-      // Сразу отдать REST-снимок, чтобы Watchlist не ждал первый WS-тик.
       void this.fetchQuotesSnapshot(unique, onRealtimeCallback, () => undefined)
 
       const unsubs: UnsubscribeFn[] = []
+      const compositeLegs = new Map<string, AlorSymbol>()
+      const subscribedLegs = new Set<string>()
+      const compositeTickers = unique.filter((name) => {
+        const legs = parseComposite(name)
+        return legs != null && legs.length >= 2
+      })
+
+      const emitComposites = () => {
+        if (subState.cancelled || compositeTickers.length === 0) {
+          return
+        }
+        onRealtimeCallback(
+          compositeTickers.map((ticker) => mapCompositeChartQuote(ticker, compositeLegs)),
+        )
+      }
+
       for (const chartName of unique) {
+        const legs = parseComposite(chartName)
+        if (legs && legs.length >= 2) {
+          for (const leg of legs) {
+            const code = leg.code
+            if (!code || subscribedLegs.has(code)) {
+              continue
+            }
+            subscribedLegs.add(code)
+            unsubs.push(
+              subscribeAlorQuotes(code, 'MOEX', (row) => {
+                if (subState.cancelled || !row) {
+                  return
+                }
+                const sym = String(row.symbol ?? code).trim() || code
+                compositeLegs.set(sym, row)
+                compositeLegs.set(code, row)
+                emitComposites()
+              }),
+            )
+          }
+          continue
+        }
+
         const code = bareSymbol(chartName)
         if (!code || code.includes('/')) {
           onRealtimeCallback([mapAlorSymbolToQuote(chartName, null)])
           continue
         }
         const exchange = resolveExchange(chartName)
-        const onQuote = (data: unknown) => {
-          if (subState.cancelled) {
-            return
-          }
-          onRealtimeCallback([mapAlorSymbolToQuote(chartName, data as never)])
-        }
-
-        const sharedUnsub = alorSharedSubscribe({
-          kind: 'quotes',
-          params: { code, exchange },
-          onData: onQuote,
-          onError: (message) => {
-            console.warn(`Alor SharedWorker quotes ${chartName}:`, message)
-          },
-        })
-
-        if (sharedUnsub) {
-          unsubs.push(() => {
-            subState.cancelled = true
-            sharedUnsub()
-          })
-          continue
-        }
-
-        try {
-          const api = await ensureAlorAccessToken()
-          if (subState.cancelled) {
-            return
-          }
-          const unsubscribe = await api.subscriptions.quotes(
-            {
-              code,
-              exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
-              format: Format.Simple,
-            },
-            onQuote,
-          )
-          if (subState.cancelled) {
-            void unsubscribe()
-            return
-          }
-          unsubs.push(() => {
-            subState.cancelled = true
-            return unsubscribe()
-          })
-        } catch (error) {
-          console.warn(`Alor quotes WS: ошибка подписки ${chartName}`, error)
-          onRealtimeCallback([mapAlorSymbolToQuote(chartName, null)])
-        }
+        unsubs.push(
+          subscribeAlorQuotes(code, exchange, (row) => {
+            if (subState.cancelled) {
+              return
+            }
+            onRealtimeCallback([mapAlorSymbolToQuote(chartName, row)])
+          }),
+        )
       }
 
       if (subState.cancelled) {
