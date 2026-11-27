@@ -10,6 +10,7 @@ import type {
 } from '@/assets/charting_library'
 import { widget } from '@/assets/charting_library'
 import { ALOR_TOKEN_CHANGED_EVENT, getAlorRefreshToken } from '@/api/alor-client'
+import { AlorTokenSetupGuide } from '@/components/AlorTokenSetupGuide'
 import { AlorDatafeed } from '@/chart/alor-datafeed'
 import { createLocalChartSaveLoadAdapter } from '@/chart/chart-save-load-adapter'
 import { CHARTING_LIBRARY_PATH } from '@/lib/charting-library-path'
@@ -252,8 +253,14 @@ export function AlorChart({
   return (
     <div className="relative size-full min-h-0 overflow-hidden bg-tmp-17181e" style={sizeStyle}>
       {tokenMissing ? (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-tmp-17181e px-4 text-sm text-muted-foreground">
-          Нужен Alor refresh token — откройте Настройки
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-tmp-17181e px-4">
+          <div className="w-full max-w-md rounded-md border border-[rgba(166,189,213,0.2)] bg-[rgb(19,19,23)] px-4 py-4 shadow-lg">
+            <div className="mb-1 text-sm font-semibold text-foreground">Нужен Alor refresh token</div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Откройте «Настройки» в шапке и вставьте API-ключ. Как получить:
+            </p>
+            <AlorTokenSetupGuide />
+          </div>
         </div>
       ) : null}
       {error ? (

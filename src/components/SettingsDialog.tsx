@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getAlorRefreshToken, setAlorRefreshToken } from '@/api/alor-client'
+import { AlorTokenSetupGuide } from '@/components/AlorTokenSetupGuide'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -32,6 +33,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }, [open])
 
+  const hasToken = tokenDraft.trim().length > 0
+
   const handleSave = () => {
     setAlorRefreshToken(tokenDraft)
     onOpenChange(false)
@@ -50,6 +53,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <DialogDescription>Токен Alor для загрузки свечей на графике.</DialogDescription>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
+          {!hasToken ? (
+            <div className="rounded-md border border-[rgba(166,189,213,0.2)] bg-[rgba(255,255,255,0.02)] px-3 py-3">
+              <div className="mb-2 text-xs font-medium text-foreground">Как получить токен</div>
+              <AlorTokenSetupGuide />
+            </div>
+          ) : null}
           <div className="flex flex-col gap-2">
             <Label htmlFor="settings-alor-token">Alor refresh token</Label>
             <Input
