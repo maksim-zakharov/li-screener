@@ -24,13 +24,23 @@ function calendarPair(
   ticker: string,
   description: string,
 ): ArbPair {
+  return ratioPair(ticker, description, [1, 1], 1)
+}
+
+/** Пара с заданным соотношением лотов. */
+function ratioPair(
+  ticker: string,
+  description: string,
+  lotRatios: number[],
+  defaultBaseLots: number,
+): ArbPair {
   return {
     id: ticker,
     ticker,
-    label: ticker.replace(/\//g, ' / '),
+    label: ticker.replace(/\*/g, '×').replace(/\//g, ' / '),
     description,
-    lotRatios: [1, 1],
-    defaultBaseLots: 1,
+    lotRatios,
+    defaultBaseLots,
   }
 }
 
@@ -63,6 +73,10 @@ export const ARB_PAIRS: ArbPair[] = [
   calendarPair('CNY-3.27/CNYRUBF', 'CNY · квартал vs вечный · H27'),
   calendarPair('SI-12.26/USDRUBF', 'SI · квартал vs USDRUBF'),
   calendarPair('SI-3.27/USDRUBF', 'SI · квартал vs USDRUBF · H27'),
+  ratioPair('SI-12.26/CNY-12.26', 'SI / CNY · квартал', [40, 267], 40),
+  ratioPair('SI-3.27/CNY-3.27', 'SI / CNY · H27', [40, 267], 40),
+  ratioPair('USDRUBF/CNYRUBF', 'USD / CNY · вечные', [1, 6.6683], 1),
+  ratioPair('EURRUBF/CNYRUBF', 'EUR / CNY · вечные', [1, 8], 1),
   metalTriplePair('GLDRUBF*31.1/USDRUBF/GOLD-12.26', 'Золото ₽ → $/oz vs GOLD'),
   metalTriplePair('GLDRUBF*31.1/SI-12.26/GOLD-12.26', 'GLDRUBF / SI / GOLD'),
   metalTriplePair('GLDRUBF*31.1/USDRUBF/GOLD-3.27', 'Золото ₽ → $/oz vs GOLD · H27'),
