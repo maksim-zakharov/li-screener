@@ -64,7 +64,7 @@ export function buildCompositeQuoteRow(
     }
   })
 
-  const steps = compositeStepMultiples(legs.length)
+  const steps = compositeStepMultiples(legs.length, ticker)
   let last = priced[0]!.last
   let prev = priced[0]!.prevClose
   for (let i = 1; i < priced.length; i++) {

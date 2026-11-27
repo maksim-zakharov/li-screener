@@ -807,7 +807,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
           if (subState.cancelled || lastBars.some((b) => !b)) {
             return
           }
-          const spread = mergeCompositeLiveBars(lastBars as Bar[], legs)
+          const spread = mergeCompositeLiveBars(lastBars as Bar[], legs, symbol)
           if (!spread) {
             return
           }
@@ -964,7 +964,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
             }),
           ),
         )
-        bars = mergeCompositeHistory(histories, legs)
+        bars = mergeCompositeHistory(histories, legs, symbol)
         if (bars.length === 0) {
           nextTime = earliestBarTimeSec(histories)
           console.warn(

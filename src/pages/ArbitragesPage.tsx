@@ -13,6 +13,7 @@ import {
 import { useArbQuotes } from '@/arbitrages/useArbQuotes'
 import { AlorChart } from '@/components/AlorChart'
 import { ArbitragesList } from '@/components/ArbitragesList'
+import { ArbPositionsPanel } from '@/components/ArbPositionsPanel'
 import { ArbSpreadDetailsCard } from '@/components/ArbSpreadDetailsCard'
 import { MobileBottomNav, MobileBottomNavItem } from '@/components/ui/mobile-bottom-nav'
 import { useIsMobile } from '@/useIsMobile'
@@ -112,8 +113,15 @@ export function ArbitragesPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {mobileTab === 'chart' ? (
-            <div className="min-h-0 min-w-0 flex-1">
-              <AlorChart symbol={selected.ticker} height="100%" showWidgetBar={false} />
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="min-h-0 min-w-0 flex-1">
+                <AlorChart symbol={selected.ticker} height="100%" showWidgetBar={false} />
+              </div>
+              <ArbPositionsPanel
+                selectedTicker={selected.ticker}
+                quotes={quotes}
+                className="max-h-[42%] overflow-hidden"
+              />
             </div>
           ) : null}
           {mobileTab === 'table' ? (
@@ -164,8 +172,15 @@ export function ArbitragesPage() {
 
   return (
     <div className="flex min-h-0 flex-1">
-      <div className="min-h-0 min-w-0 flex-1">
-        <AlorChart symbol={selected.ticker} height="100%" showWidgetBar={false} />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 min-w-0 flex-1">
+          <AlorChart symbol={selected.ticker} height="100%" showWidgetBar={false} />
+        </div>
+        <ArbPositionsPanel
+          selectedTicker={selected.ticker}
+          quotes={quotes}
+          className="h-[220px] overflow-hidden"
+        />
       </div>
       <ArbitragesList
         pairs={visiblePairs}
