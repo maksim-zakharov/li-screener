@@ -67,7 +67,7 @@ export type ArbListId = 'forex' | 'stocks'
 
 /**
  * Пара акция TQBR / фьючерс (1:1).
- * По умолчанию фьюч = `{stock}-12.26`; исключения: SBER→SBRF, GAZP→GAZR, MTSS→MTSI, SNGS→SNGR, NVTK→NOTK.
+ * По умолчанию фьюч = `{stock}-12.26`; исключения: SBER→SBRF, GAZP→GAZR, MTSS→MTSI, SNGS→SNGR, NVTK→NOTKM, PLZL→PLZLM, TRNFP→TRNF, CHMF→CHMFM.
  */
 function stockFuturePair(stock: string, futureRoot = stock): ArbPair {
   return calendarPair(`${stock}/${futureRoot}-12.26`, `${stock} · акция / фьючерс`)
@@ -110,11 +110,11 @@ export const ARB_STOCK_PAIRS: ArbPair[] = [
   stockFuturePair('VTBR'),
   stockFuturePair('MGNT'),
   stockFuturePair('MOEX'),
-  stockFuturePair('NVTK', 'NOTK'),
-  stockFuturePair('PLZL'),
+  stockFuturePair('NVTK', 'NOTKM'),
+  stockFuturePair('PLZL', 'PLZLM'),
   stockFuturePair('TATN'),
   stockFuturePair('SNGS', 'SNGR'),
-  stockFuturePair('CHMF'),
+  stockFuturePair('CHMF', 'CHMFM'),
   stockFuturePair('NLMK'),
   stockFuturePair('MAGN'),
   stockFuturePair('ALRS'),
@@ -126,7 +126,7 @@ export const ARB_STOCK_PAIRS: ArbPair[] = [
   stockFuturePair('FEES'),
   stockFuturePair('IRAO'),
   stockFuturePair('SIBN'),
-  stockFuturePair('TRNFP'),
+  stockFuturePair('TRNFP', 'TRNF'),
   stockFuturePair('MTLR'),
   stockFuturePair('RUAL'),
   stockFuturePair('YDEX'),
