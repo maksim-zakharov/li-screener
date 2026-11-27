@@ -62,10 +62,21 @@ function metalTriplePair(ticker: string, description: string): ArbPair {
   }
 }
 
+/** Id списка арбитражей в UI. */
+export type ArbListId = 'forex' | 'stocks'
+
 /**
- * Статический список арбитражей (календарные спреды FORTS и т.п.).
+ * Пара акция TQBR / фьючерс (1:1).
+ * По умолчанию фьюч = `{stock}-12.26`; исключения: SBER→SBRF, GAZP→GAZR, MTSS→MTSI, SNGS→SNGR, NVTK→NOTK.
  */
-export const ARB_PAIRS: ArbPair[] = [
+function stockFuturePair(stock: string, futureRoot = stock): ArbPair {
+  return calendarPair(`${stock}/${futureRoot}-12.26`, `${stock} · акция / фьючерс`)
+}
+
+/**
+ * Форекс / металлы / валютные календарные спреды FORTS.
+ */
+export const ARB_FOREX_PAIRS: ArbPair[] = [
   calendarPair('GOLD-12.26/GOLD-3.27', 'Золото · календарный спред'),
   calendarPair('SILV-12.26/SILV-3.27', 'Серебро · календарный спред'),
   calendarPair('ED-12.26/ED-3.27', 'EUR/USD · календарный спред'),
@@ -87,8 +98,77 @@ export const ARB_PAIRS: ArbPair[] = [
   metalTriplePair('SLVRUBF*31.1/SI-3.27/SILV-3.27', 'SLVRUBF / SI / SILV · H27'),
 ]
 
+/**
+ * Акции TQBR vs квартальные фьючерсы `{ticker}-12.26`.
+ */
+export const ARB_STOCK_PAIRS: ArbPair[] = [
+  stockFuturePair('SBER', 'SBRF'),
+  stockFuturePair('GAZP', 'GAZR'),
+  stockFuturePair('LKOH'),
+  stockFuturePair('ROSN'),
+  stockFuturePair('GMKN'),
+  stockFuturePair('VTBR'),
+  stockFuturePair('MGNT'),
+  stockFuturePair('MOEX'),
+  stockFuturePair('NVTK', 'NOTK'),
+  stockFuturePair('PLZL'),
+  stockFuturePair('TATN'),
+  stockFuturePair('SNGS', 'SNGR'),
+  stockFuturePair('CHMF'),
+  stockFuturePair('NLMK'),
+  stockFuturePair('MAGN'),
+  stockFuturePair('ALRS'),
+  stockFuturePair('MTSS', 'MTSI'),
+  stockFuturePair('AFLT'),
+  stockFuturePair('AFKS'),
+  stockFuturePair('RTKM'),
+  stockFuturePair('HYDR'),
+  stockFuturePair('FEES'),
+  stockFuturePair('IRAO'),
+  stockFuturePair('SIBN'),
+  stockFuturePair('TRNFP'),
+  stockFuturePair('MTLR'),
+  stockFuturePair('RUAL'),
+  stockFuturePair('YDEX'),
+  stockFuturePair('OZON'),
+  stockFuturePair('VKCO'),
+  stockFuturePair('POSI'),
+  stockFuturePair('HEAD'),
+  stockFuturePair('X5'),
+  stockFuturePair('PHOR'),
+  stockFuturePair('SMLT'),
+  stockFuturePair('FLOT'),
+  stockFuturePair('BSPB'),
+  stockFuturePair('CBOM'),
+  stockFuturePair('MDMG'),
+  stockFuturePair('RENI'),
+  stockFuturePair('LENT'),
+  stockFuturePair('FIXR'),
+  stockFuturePair('UPRO'),
+]
+
+/** Пары по id списка. */
+export const ARB_PAIRS_BY_LIST: Record<ArbListId, ArbPair[]> = {
+  forex: ARB_FOREX_PAIRS,
+  stocks: ARB_STOCK_PAIRS,
+}
+
+/** Все пары (котировки / резолв ticker из query). */
+export const ARB_PAIRS: ArbPair[] = [...ARB_FOREX_PAIRS, ...ARB_STOCK_PAIRS]
+
+/** Список по умолчанию. */
+export const DEFAULT_ARB_LIST: ArbListId = 'forex'
+
 /** Пара по умолчанию. */
-export const DEFAULT_ARB_PAIR = ARB_PAIRS[0]!
+export const DEFAULT_ARB_PAIR = ARB_FOREX_PAIRS[0]!
+
+/** Список, в котором лежит пара. */
+export function resolveArbListId(pair: ArbPair): ArbListId {
+  if (ARB_STOCK_PAIRS.some((item) => item.id === pair.id)) {
+    return 'stocks'
+  }
+  return 'forex'
+}
 
 /**
  * Лоты ног от базового объёма (лоты 1-й ноги).

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
-import type { ArbPair } from '@/arbitrages/arb-pairs'
+import type { ArbListId, ArbPair } from '@/arbitrages/arb-pairs'
 import {
   formatArbNumber,
   formatArbPercent,
@@ -8,11 +8,25 @@ import {
 } from '@/arbitrages/arb-quote'
 import { useArbQuotes } from '@/arbitrages/useArbQuotes'
 import { ArbSpreadDetailsCard } from '@/components/ArbSpreadDetailsCard'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 /** Колонки сортировки списка. */
 type SortKey = 'ticker' | 'last' | 'change' | 'changePercent'
 /** Направление сортировки. */
 type SortDir = 'asc' | 'desc'
+
+/** Опции выбора списка. */
+const LIST_OPTIONS: { value: ArbListId; label: string }[] = [
+  { value: 'forex', label: 'Форекс' },
+  { value: 'stocks', label: 'Акции' },
+]
 
 interface ArbitragesListProps {
   /** Пары в списке */
@@ -21,6 +35,10 @@ interface ArbitragesListProps {
   selectedTicker: string
   /** Выбор пары */
   onSelect: (pair: ArbPair) => void
+  /** Активный список (Форекс / Акции) */
+  listId: ArbListId
+  /** Смена списка */
+  onListChange: (listId: ArbListId) => void
   /** Live-котировки (если не переданы — подписка внутри) */
   quotes?: Record<string, ArbQuoteRow>
   /** Показывать карточку деталей под списком (десктоп) */
@@ -36,6 +54,8 @@ export function ArbitragesList({
   pairs,
   selectedTicker,
   onSelect,
+  listId,
+  onListChange,
   quotes: quotesProp,
   showDetails = true,
   className,
@@ -102,14 +122,26 @@ export function ArbitragesList({
         className,
       )}
     >
-      <div className="shrink-0 border-b border-[rgba(166,189,213,0.2)] px-3 py-2">
-        <input
+      <div className="flex shrink-0 gap-2 border-b border-[rgba(166,189,213,0.2)] px-3 py-2">
+        <Select value={listId} onValueChange={(value) => onListChange(value as ArbListId)}>
+          <SelectTrigger size="sm" aria-label="Список арбитражей" className="w-[108px] shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {LIST_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Поиск…"
           aria-label="Поиск арбитражей"
-          className="h-8 w-full rounded border border-[rgba(166,189,213,0.25)] bg-[rgb(28,28,34)] px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-[#2962ff]"
+          className="h-8 min-w-0 flex-1"
         />
       </div>
 
