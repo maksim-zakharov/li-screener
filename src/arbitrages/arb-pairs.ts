@@ -84,6 +84,7 @@ export const ARB_FOREX_PAIRS: ArbPair[] = [
   calendarPair('CNY-3.27/CNYRUBF', 'CNY · квартал vs вечный · H27'),
   calendarPair('SI-12.26/USDRUBF', 'SI · квартал vs USDRUBF'),
   calendarPair('SI-3.27/USDRUBF', 'SI · квартал vs USDRUBF · H27'),
+  calendarPair('MIX-12.26/IMOEXF', 'MIX · квартал vs IMOEXF'),
   ratioPair('SI-12.26/CNY-12.26', 'SI / CNY · квартал', [40, 267], 40),
   ratioPair('SI-3.27/CNY-3.27', 'SI / CNY · H27', [40, 267], 40),
   ratioPair('USDRUBF/CNYRUBF', 'USD / CNY · вечные', [1, 6.6683], 1),
