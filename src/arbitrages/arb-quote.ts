@@ -1,5 +1,10 @@
 import type { Symbol as AlorSymbol } from 'alor-api'
-import { MOEX_SPREAD_MULTIPLE, splitSpreadLegs } from '@/chart/alor-spread'
+import {
+  compositeStepMultiples,
+  MOEX_SPREAD_MULTIPLE,
+  parseCompositeTicker,
+  type CompositeLeg,
+} from '@/chart/alor-spread'
 
 /** Котировка строки списка арбитражей (как колонки TV Quotes List). */
 export interface ArbQuoteRow {
@@ -31,23 +36,45 @@ export function extractLegPrices(quote: AlorSymbol | null | undefined): {
   return { last, prevClose }
 }
 
+function scalePrice(value: number | null, leg: CompositeLeg): number | null {
+  if (value == null) {
+    return null
+  }
+  const divisor = leg.divisor > 0 ? leg.divisor : 1
+  return (value * leg.factor) / divisor
+}
+
 /**
- * Спред (L/R)×100 + дневное изменение от prev_close ног.
+ * Композит: left-assoc (L/R)×step с factor/divisor на ногах.
  */
-export function buildSpreadQuoteRow(
+export function buildCompositeQuoteRow(
   ticker: string,
-  left: AlorSymbol | null | undefined,
-  right: AlorSymbol | null | undefined,
-  multiple = MOEX_SPREAD_MULTIPLE,
+  quotesByCode: Map<string, AlorSymbol | null | undefined>,
 ): ArbQuoteRow {
-  const l = extractLegPrices(left)
-  const r = extractLegPrices(right)
-  const last =
-    l.last != null && r.last != null && r.last !== 0 ? (l.last / r.last) * multiple : null
-  const prev =
-    l.prevClose != null && r.prevClose != null && r.prevClose !== 0
-      ? (l.prevClose / r.prevClose) * multiple
-      : null
+  const legs = parseCompositeTicker(ticker)
+  if (!legs || legs.length < 2) {
+    return { ticker, last: null, change: null, changePercent: null }
+  }
+
+  const priced = legs.map((leg) => {
+    const prices = extractLegPrices(quotesByCode.get(leg.code))
+    return {
+      last: scalePrice(prices.last, leg),
+      prevClose: scalePrice(prices.prevClose, leg),
+    }
+  })
+
+  const steps = compositeStepMultiples(legs.length)
+  let last = priced[0]!.last
+  let prev = priced[0]!.prevClose
+  for (let i = 1; i < priced.length; i++) {
+    const rightLast = priced[i]!.last
+    const rightPrev = priced[i]!.prevClose
+    const step = steps[i - 1] ?? MOEX_SPREAD_MULTIPLE
+    last = last != null && rightLast != null && rightLast !== 0 ? (last / rightLast) * step : null
+    prev = prev != null && rightPrev != null && rightPrev !== 0 ? (prev / rightPrev) * step : null
+  }
+
   if (last == null) {
     return { ticker, last: null, change: null, changePercent: null }
   }
@@ -59,13 +86,40 @@ export function buildSpreadQuoteRow(
   return { ticker, last, change, changePercent }
 }
 
-/** Ноги тикера `A/B` без префикса биржи. */
+/**
+ * Спред (L/R)×100 + дневное изменение от prev_close ног (2 ноги).
+ */
+export function buildSpreadQuoteRow(
+  ticker: string,
+  left: AlorSymbol | null | undefined,
+  right: AlorSymbol | null | undefined,
+): ArbQuoteRow {
+  const map = new Map<string, AlorSymbol | null | undefined>()
+  const legs = parseCompositeTicker(ticker)
+  if (legs?.length === 2) {
+    map.set(legs[0]!.code, left)
+    map.set(legs[1]!.code, right)
+    return buildCompositeQuoteRow(ticker, map)
+  }
+  return { ticker, last: null, change: null, changePercent: null }
+}
+
+/** Коды ног композита для подписки quotes. */
+export function parseArbTickerCodes(ticker: string): string[] {
+  const legs = parseCompositeTicker(ticker)
+  if (!legs) {
+    return []
+  }
+  return legs.map((leg) => leg.code)
+}
+
+/** @deprecated используйте parseArbTickerCodes / parseCompositeTicker */
 export function parseArbTickerLegs(ticker: string): { left: string; right: string } | null {
-  return splitSpreadLegs(ticker, (part) => {
-    const trimmed = part.trim()
-    const colon = trimmed.indexOf(':')
-    return colon > 0 ? trimmed.slice(colon + 1).trim() : trimmed
-  })
+  const legs = parseCompositeTicker(ticker)
+  if (!legs || legs.length !== 2) {
+    return null
+  }
+  return { left: legs[0]!.code, right: legs[1]!.code }
 }
 
 function finiteOrNull(value: unknown): number | null {

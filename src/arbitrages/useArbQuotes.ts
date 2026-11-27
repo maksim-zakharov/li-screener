@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Exchange, Format, type Symbol as AlorSymbol } from 'alor-api'
 import { ensureAlorAccessToken, getAlorRefreshToken } from '@/api/alor-client'
-import { buildSpreadQuoteRow, parseArbTickerLegs, type ArbQuoteRow } from '@/arbitrages/arb-quote'
+import {
+  buildCompositeQuoteRow,
+  parseArbTickerCodes,
+  type ArbQuoteRow,
+} from '@/arbitrages/arb-quote'
 import type { ArbPair } from '@/arbitrages/arb-pairs'
 
 /**
- * Live-котировки арбитражных спредов: WS quotes на обе ноги → (L/R)×100.
+ * Live-котировки арбитражных спредов: WS quotes на ноги → композит (L/R)×step.
  */
 export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
   const tickersKey = useMemo(() => pairs.map((p) => p.ticker).join('|'), [pairs])
@@ -21,13 +25,13 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
     const unsubs: Array<() => void | Promise<void>> = []
     /** Последние котировки ног по коду. */
     const legs = new Map<string, AlorSymbol>()
-    /** ticker → { left, right } */
-    const pairLegs = new Map<string, { left: string; right: string }>()
+    /** ticker → коды ног */
+    const pairCodes = new Map<string, string[]>()
 
     for (const pair of pairs) {
-      const parsed = parseArbTickerLegs(pair.ticker)
-      if (parsed) {
-        pairLegs.set(pair.ticker, parsed)
+      const codes = parseArbTickerCodes(pair.ticker)
+      if (codes.length >= 2) {
+        pairCodes.set(pair.ticker, codes)
       }
     }
 
@@ -36,13 +40,13 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
         return
       }
       const next: Record<string, ArbQuoteRow> = {}
-      for (const [ticker, codes] of pairLegs) {
-        next[ticker] = buildSpreadQuoteRow(ticker, legs.get(codes.left), legs.get(codes.right))
+      for (const ticker of pairCodes.keys()) {
+        next[ticker] = buildCompositeQuoteRow(ticker, legs)
       }
       setByTicker(next)
     }
 
-    const codes = [...new Set([...pairLegs.values()].flatMap((p) => [p.left, p.right]))]
+    const codes = [...new Set([...pairCodes.values()].flat())]
 
     void (async () => {
       try {
@@ -108,7 +112,6 @@ export function useArbQuotes(pairs: ArbPair[]): Record<string, ArbQuoteRow> {
         void unsub()
       }
     }
-    // tickersKey отражает состав pairs
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickersKey])
 

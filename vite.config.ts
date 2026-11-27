@@ -17,4 +17,14 @@ export default defineConfig({
       ws: path.resolve(__dirname, './src/alias/ws.js'),
     },
   },
+  server: {
+    proxy: {
+      /** MOEX ISS — ГО FORTS без CORS в dev */
+      '/moex-iss': {
+        target: 'https://iss.moex.com',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/moex-iss/, ''),
+      },
+    },
+  },
 })

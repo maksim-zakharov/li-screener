@@ -11,6 +11,7 @@ import type {
 import { widget } from '@/assets/charting_library'
 import { ALOR_TOKEN_CHANGED_EVENT, getAlorRefreshToken } from '@/api/alor-client'
 import { AlorDatafeed } from '@/chart/alor-datafeed'
+import { createLocalChartSaveLoadAdapter } from '@/chart/chart-save-load-adapter'
 import { CHARTING_LIBRARY_PATH } from '@/lib/charting-library-path'
 
 interface AlorChartProps {
@@ -53,6 +54,8 @@ const ENABLED_FEATURES: TradingTerminalFeatureset[] = [
   'items_favoriting',
   'study_templates',
   'datasource_copypaste',
+  /** Рисунки отдельно от layout — saveLineToolsAndGroups / loadLineToolsAndGroups */
+  'saveload_separate_drawings_storage',
   'determine_first_data_request_size_using_visible_range' as TradingTerminalFeatureset,
 ]
 
@@ -147,6 +150,10 @@ export function AlorChart({
       enabled_features: ENABLED_FEATURES,
       custom_css_url: `${CHARTING_LIBRARY_PATH}tw-chart-theme.css`,
       auto_save_delay: 1,
+      client_id: 'li-screener',
+      user_id: 'local',
+      load_last_chart: true,
+      save_load_adapter: createLocalChartSaveLoadAdapter(),
       widgetbar: {
         details: widgetBarOn,
         watchlist: widgetBarOn,
@@ -171,6 +178,18 @@ export function AlorChart({
       }
       try {
         chartWidget.activeChart().getTimezoneApi().setTimezone('Europe/Moscow')
+      } catch {
+        // ignore
+      }
+      try {
+        chartWidget.subscribe('onAutoSaveNeeded', () => {
+          if (widgetRef.current !== chartWidget) {
+            return
+          }
+          void chartWidget.saveChartToServer({ defaultChartName: 'li-screener' }).catch((err) => {
+            console.warn('AlorChart auto-save:', err)
+          })
+        })
       } catch {
         // ignore
       }
@@ -212,6 +231,12 @@ export function AlorChart({
           return
         }
         await Promise.resolve(chartApi.setSymbol(next))
+        // TV часто не подтягивает рисунки сам после setSymbol — форсим reload из adapter.
+        try {
+          chartApi.reloadLineToolsFromServer?.()
+        } catch {
+          // ignore
+        }
       } catch (err) {
         console.warn('AlorChart setSymbol:', err)
       }

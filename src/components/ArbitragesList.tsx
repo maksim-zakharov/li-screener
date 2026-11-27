@@ -6,6 +6,7 @@ import {
   type ArbQuoteRow,
 } from '@/arbitrages/arb-quote'
 import { useArbQuotes } from '@/arbitrages/useArbQuotes'
+import { ArbSpreadDetailsCard } from '@/components/ArbSpreadDetailsCard'
 
 interface ArbitragesListProps {
   /** Пары в списке */
@@ -19,10 +20,11 @@ interface ArbitragesListProps {
 }
 
 /**
- * Правая колонка: список котировок арбитражей в стиле TV Quotes List.
+ * Правая колонка: список котировок арбитражей + карточка выбранного спреда.
  */
 export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: ArbitragesListProps) {
   const quotes = useArbQuotes(pairs)
+  const selected = pairs.find((p) => p.ticker === selectedTicker) ?? pairs[0]
 
   return (
     <aside
@@ -78,6 +80,8 @@ export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: A
           )
         })}
       </ul>
+
+      {selected ? <ArbSpreadDetailsCard pair={selected} /> : null}
     </aside>
   )
 }

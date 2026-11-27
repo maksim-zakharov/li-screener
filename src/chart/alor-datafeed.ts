@@ -21,10 +21,10 @@ import { ensureAlorAccessToken } from '@/api/alor-client'
 import { mapAlorSymbolToQuote } from '@/chart/alor-quotes'
 import {
   earliestBarTimeSec,
-  mergeSpreadHistory,
+  mergeCompositeHistory,
+  mergeCompositeLiveBars,
   MOEX_SPREAD_MULTIPLE,
-  ratioSpreadBar,
-  splitSpreadLegs as splitSpreadLegsRaw,
+  parseCompositeTicker as parseCompositeTickerRaw,
 } from '@/chart/alor-spread'
 
 /** Сессия MOEX для TradingView (как в smartmoney chart-session). */
@@ -173,9 +173,9 @@ function candleTimeToMs(raw: number): number {
   return raw < 1e12 ? raw * 1000 : raw
 }
 
-/** Ноги спреда `A/B` без префиксов биржи. */
-function splitSpreadLegs(symbol: string) {
-  return splitSpreadLegsRaw(symbol, bareSymbol)
+/** Композит `A/B` / `A*31.1/B/C` без префиксов биржи. */
+function parseComposite(symbol: string) {
+  return parseCompositeTickerRaw(symbol, bareSymbol)
 }
 
 type UnsubscribeFn = () => void | Promise<void>
@@ -498,22 +498,23 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
   }
 
   /**
-   * Синтетический LibrarySymbolInfo для `A/B` (как smartmoney для isSentetic).
+   * Синтетический LibrarySymbolInfo для композита (как smartmoney isSentetic).
    * Не зависит от Alor securities — иначе TV пишет «такого инструмента не существует».
    */
   private buildSpreadSymbolInfo(
     symbol: string,
-    legs: { left: string; right: string },
+    legs: Array<{ code: string }>,
     exchange: 'MOEX' | 'SPBX',
     currency = 'RUB',
   ): LibrarySymbolInfo {
     /** Как DEFAULT_CHART_PRECISION на фронте для спредов. */
     const precision = 3
     const pricescale = 10 ** precision
+    const codes = legs.map((leg) => leg.code).join('/')
     return {
       ticker: symbol,
       name: symbol,
-      description: `(${legs.left}/${legs.right})×${MOEX_SPREAD_MULTIPLE}`,
+      description: `(${codes})×${MOEX_SPREAD_MULTIPLE}`,
       type: 'spread',
       session: MOEX_SESSION,
       timezone: MOEX_TIMEZONE,
@@ -535,7 +536,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
   }
 
   /**
-   * Resolve: одиночный — Alor security; спред `A/B` — всегда синтетика (ноги для history/WS).
+   * Resolve: одиночный — Alor security; композит — всегда синтетика.
    */
   private async resolveSymbolAsync(
     symbolName: string,
@@ -548,7 +549,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
       return
     }
 
-    const legs = splitSpreadLegs(symbol)
+    const legs = parseComposite(symbol)
     const exchange = resolveExchange(symbolName)
 
     if (legs) {
@@ -557,7 +558,7 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
         const api = await ensureAlorAccessToken()
         const security = await api.instruments
           .getSecurityByExchangeAndSymbol({
-            symbol: legs.left,
+            symbol: legs[0]!.code,
             exchange: exchange === 'SPBX' ? Exchange.SPBX : Exchange.MOEX,
             format: 'Simple',
           })
@@ -638,20 +639,15 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
         ? Math.floor(lastMs / 1000)
         : Math.floor(Date.now() / 1000) - Math.max(Number(tf) || 60, 60)
 
-      const legs = splitSpreadLegs(symbol)
+      const legs = parseComposite(symbol)
       if (legs) {
-        const lastLeft: { bar: Bar | null } = { bar: null }
-        const lastRight: { bar: Bar | null } = { bar: null }
+        const lastBars: Array<Bar | null> = legs.map(() => null)
 
         const emitSpread = () => {
-          if (subState.cancelled || !lastLeft.bar || !lastRight.bar) {
+          if (subState.cancelled || lastBars.some((b) => !b)) {
             return
           }
-          // Как на фронте для MOEX: только совпадающий time.
-          if (lastLeft.bar.time !== lastRight.bar.time) {
-            return
-          }
-          const spread = ratioSpreadBar(lastLeft.bar, lastRight.bar, MOEX_SPREAD_MULTIPLE)
+          const spread = mergeCompositeLiveBars(lastBars as Bar[], legs)
           if (!spread) {
             return
           }
@@ -685,51 +681,41 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
           }
         }
 
-        const [unsubLeft, unsubRight] = await Promise.all([
-          api.subscriptions.candles(
-            { code: legs.left, exchange: alorExchange, format: Format.Simple, tf, from: fromSec },
-            (data) => {
-              if (subState.cancelled || !data) {
-                return
-              }
-              const bar = toBar(data)
-              if (!bar) {
-                return
-              }
-              lastLeft.bar = bar
-              emitSpread()
-            },
+        const unsubs = await Promise.all(
+          legs.map((leg, idx) =>
+            api.subscriptions.candles(
+              { code: leg.code, exchange: alorExchange, format: Format.Simple, tf, from: fromSec },
+              (data) => {
+                if (subState.cancelled || !data) {
+                  return
+                }
+                const bar = toBar(data)
+                if (!bar) {
+                  return
+                }
+                lastBars[idx] = bar
+                emitSpread()
+              },
+            ),
           ),
-          api.subscriptions.candles(
-            { code: legs.right, exchange: alorExchange, format: Format.Simple, tf, from: fromSec },
-            (data) => {
-              if (subState.cancelled || !data) {
-                return
-              }
-              const bar = toBar(data)
-              if (!bar) {
-                return
-              }
-              lastRight.bar = bar
-              emitSpread()
-            },
-          ),
-        ])
+        )
 
         if (subState.cancelled) {
-          void unsubLeft()
-          void unsubRight()
+          for (const unsub of unsubs) {
+            void unsub()
+          }
           return
         }
 
         const existing = this.subscriptions.get(listenerGuid) ?? []
         this.subscriptions.set(listenerGuid, [
           ...existing,
-          () => {
-            subState.cancelled = true
-            return unsubLeft()
-          },
-          () => unsubRight(),
+          ...unsubs.map((unsubscribe, idx) => () => {
+            if (idx === 0) {
+              subState.cancelled = true
+            }
+            return unsubscribe()
+          }),
         ])
         return
       }
@@ -838,26 +824,24 @@ export class AlorDatafeed implements IBasicDataFeed, IDatafeedQuotesApi {
       const toSec = Math.max(effectiveParams.to, 1)
       const tf = mapResolutionToAlorTf(resolution)
       const fromMs = fromSec * 1000
-      const legs = splitSpreadLegs(symbol)
+      const legs = parseComposite(symbol)
 
       let bars: Bar[]
       let nextTime: number | undefined
       if (legs) {
-        const [leftBars, rightBars] = await Promise.all([
-          this.fetchHistoryBars(legs.left, exchange, tf, fromSec, toSec).catch((err) => {
-            console.warn(`Alor history ${legs.left}:`, err)
-            return [] as Bar[]
-          }),
-          this.fetchHistoryBars(legs.right, exchange, tf, fromSec, toSec).catch((err) => {
-            console.warn(`Alor history ${legs.right}:`, err)
-            return [] as Bar[]
-          }),
-        ])
-        bars = mergeSpreadHistory(leftBars, rightBars, MOEX_SPREAD_MULTIPLE)
+        const histories = await Promise.all(
+          legs.map((leg) =>
+            this.fetchHistoryBars(leg.code, exchange, tf, fromSec, toSec).catch((err) => {
+              console.warn(`Alor history ${leg.code}:`, err)
+              return [] as Bar[]
+            }),
+          ),
+        )
+        bars = mergeCompositeHistory(histories, legs)
         if (bars.length === 0) {
-          nextTime = earliestBarTimeSec([leftBars, rightBars])
+          nextTime = earliestBarTimeSec(histories)
           console.warn(
-            `Alor spread ${symbol}: left=${leftBars.length} right=${rightBars.length} merged=0`,
+            `Alor spread ${symbol}: legs=${histories.map((h) => h.length).join('/')} merged=0`,
           )
         }
       } else {
