@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
-import { fetchMoexIssMarginMap, normalizeIssShortname } from '@/arbitrages/moex-iss-margin'
+import {
+  fetchMoexIssFortsCatalog,
+  normalizeIssShortname,
+} from '@/arbitrages/moex-iss-margin'
 
 /**
- * ГО (₽/контракт) по кодам ног с MOEX ISS.
+ * ГО и объём контракта (₽) по кодам ног с MOEX ISS.
  */
 export function useLegMargins(codes: string[]): {
   /** code → ГО ₽ */
   marginByCode: Record<string, number | null>
+  /** code → объём 1 контракта ₽ */
+  volumeByCode: Record<string, number | null>
   /** Идёт загрузка */
   loading: boolean
   /** Ошибка загрузки каталога */
@@ -14,12 +19,14 @@ export function useLegMargins(codes: string[]): {
 } {
   const key = useMemo(() => codes.join('|'), [codes])
   const [marginByCode, setMarginByCode] = useState<Record<string, number | null>>({})
+  const [volumeByCode, setVolumeByCode] = useState<Record<string, number | null>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (codes.length === 0) {
       setMarginByCode({})
+      setVolumeByCode({})
       setLoading(false)
       setError(null)
       return
@@ -31,15 +38,19 @@ export function useLegMargins(codes: string[]): {
 
     void (async () => {
       try {
-        const map = await fetchMoexIssMarginMap()
+        const catalog = await fetchMoexIssFortsCatalog()
         if (cancelled) {
           return
         }
-        const next: Record<string, number | null> = {}
+        const nextMargin: Record<string, number | null> = {}
+        const nextVolume: Record<string, number | null> = {}
         for (const code of codes) {
-          next[code] = map.get(normalizeIssShortname(code)) ?? null
+          const norm = normalizeIssShortname(code)
+          nextMargin[code] = catalog.marginByKey.get(norm) ?? null
+          nextVolume[code] = catalog.volumeByKey.get(norm) ?? null
         }
-        setMarginByCode(next)
+        setMarginByCode(nextMargin)
+        setVolumeByCode(nextVolume)
         setLoading(false)
       } catch (err) {
         if (cancelled) {
@@ -48,6 +59,7 @@ export function useLegMargins(codes: string[]): {
         console.warn('ГО ISS:', err)
         setError(err instanceof Error ? err.message : String(err))
         setMarginByCode({})
+        setVolumeByCode({})
         setLoading(false)
       }
     })()
@@ -58,5 +70,5 @@ export function useLegMargins(codes: string[]): {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
 
-  return { marginByCode, loading, error }
+  return { marginByCode, volumeByCode, loading, error }
 }

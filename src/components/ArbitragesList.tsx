@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import type { ArbPair } from '@/arbitrages/arb-pairs'
 import {
@@ -23,8 +24,20 @@ interface ArbitragesListProps {
  * Правая колонка: список котировок арбитражей + карточка выбранного спреда.
  */
 export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: ArbitragesListProps) {
+  const [query, setQuery] = useState('')
   const quotes = useArbQuotes(pairs)
   const selected = pairs.find((p) => p.ticker === selectedTicker) ?? pairs[0]
+
+  const filteredPairs = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) {
+      return pairs
+    }
+    return pairs.filter((pair) => {
+      const haystack = `${pair.ticker} ${pair.label} ${pair.description}`.toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [pairs, query])
 
   return (
     <aside
@@ -33,8 +46,15 @@ export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: A
         className,
       )}
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-[rgba(166,189,213,0.2)] px-3 py-2">
-        <h2 className="text-sm font-semibold text-foreground">Список котировок</h2>
+      <div className="shrink-0 border-b border-[rgba(166,189,213,0.2)] px-3 py-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Поиск…"
+          aria-label="Поиск арбитражей"
+          className="h-8 w-full rounded border border-[rgba(166,189,213,0.25)] bg-[rgb(28,28,34)] px-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-[#2962ff]"
+        />
       </div>
 
       <div
@@ -48,40 +68,49 @@ export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: A
       </div>
 
       <ul className="min-h-0 flex-1 overflow-y-auto py-0.5" role="listbox" aria-label="Арбитражи">
-        {pairs.map((pair) => {
-          const active = pair.ticker === selectedTicker
-          const quote = quotes[pair.ticker]
-          return (
-            <li key={pair.id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={active}
-                className={cn(
-                  'grid w-full cursor-pointer grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.85fr)] gap-1 px-3 py-1.5 text-left text-[13px] transition-colors',
-                  active
-                    ? 'bg-[rgba(41,98,255,0.12)] outline outline-1 outline-[#2962ff] -outline-offset-1'
-                    : 'hover:bg-[rgba(255,255,255,0.04)]',
-                )}
-                onClick={() => onSelect(pair)}
-              >
-                <span
+        {filteredPairs.length === 0 ? (
+          <li className="px-3 py-4 text-center text-xs text-muted-foreground">Ничего не найдено</li>
+        ) : (
+          filteredPairs.map((pair) => {
+            const active = pair.ticker === selectedTicker
+            const quote = quotes[pair.ticker]
+            return (
+              <li key={pair.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={active}
                   className={cn(
-                    'truncate font-medium',
-                    active ? 'text-foreground' : 'text-[rgb(209,212,220)]',
+                    'grid w-full cursor-pointer grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,0.75fr)_minmax(0,0.85fr)] gap-1 px-3 py-1.5 text-left text-[13px] transition-colors',
+                    active
+                      ? 'bg-[rgba(41,98,255,0.12)] outline outline-1 outline-[#2962ff] -outline-offset-1'
+                      : 'hover:bg-[rgba(255,255,255,0.04)]',
                   )}
-                  title={pair.ticker}
+                  onClick={() => onSelect(pair)}
                 >
-                  {pair.ticker}
-                </span>
-                <QuoteCells quote={quote} />
-              </button>
-            </li>
-          )
-        })}
+                  <span
+                    className={cn(
+                      'truncate font-medium',
+                      active ? 'text-foreground' : 'text-[rgb(209,212,220)]',
+                    )}
+                    title={pair.ticker}
+                  >
+                    {pair.ticker}
+                  </span>
+                  <QuoteCells quote={quote} />
+                </button>
+              </li>
+            )
+          })
+        )}
       </ul>
 
-      {selected ? <ArbSpreadDetailsCard pair={selected} /> : null}
+      {selected ? (
+        <ArbSpreadDetailsCard
+          pair={selected}
+          currentSpread={quotes[selected.ticker]?.last ?? null}
+        />
+      ) : null}
     </aside>
   )
 }
