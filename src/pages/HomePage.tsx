@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
@@ -8,16 +8,15 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import { cn } from '@/lib/utils'
 
 /** Стартовая страница шаблона. */
 export function HomePage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="font-heading text-3xl font-semibold tracking-tight">LI Screener</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">LI Screener</h1>
         <p className="text-muted-foreground">
-          Шаблон на React, TypeScript, Vite, Tailwind CSS и shadcn/ui с деплоем на GitHub Pages.
+          UI-кит и дизайн из smartmoney-client: токены BDS, dark theme, shadcn/ui (new-york).
         </p>
       </div>
 
@@ -29,13 +28,13 @@ export function HomePage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="text-muted-foreground">
-          Добавляйте страницы в <code className="text-foreground">src/pages</code>, компоненты UI —
-          через <code className="text-foreground">npx shadcn add</code>.
+          Компоненты в <code className="text-foreground">src/components/ui</code>, стили и токены — в{' '}
+          <code className="text-foreground">src/index.css</code>.
         </CardContent>
         <CardFooter>
-          <Link to="/about" className={cn(buttonVariants())}>
-            О проекте
-          </Link>
+          <Button asChild>
+            <Link to="/about">О проекте</Link>
+          </Button>
         </CardFooter>
       </Card>
     </div>

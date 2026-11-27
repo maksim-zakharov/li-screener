@@ -1,6 +1,8 @@
 # LI Screener
 
-Фронтенд-шаблон на **React + TypeScript + Vite + Tailwind CSS + shadcn/ui**.
+Фронтенд-шаблон на **React + TypeScript + Vite + Tailwind CSS**.
+
+UI-кит, токены и дизайн перенесены из [smartmoney-client](https://github.com/maksim-zakharov/smartmoney-client) (crypto-spreads.com): shadcn/ui new-york + Radix, BDS-токены, dark theme.
 
 Роутинг через `HashRouter` — подходит для GitHub Pages.
 
@@ -13,12 +15,11 @@ npm run build    # production-сборка в dist/
 npm run preview  # превью сборки
 ```
 
-## shadcn/ui
+## UI-кит
 
-```bash
-npx shadcn add button
-npx shadcn add card dialog table
-```
+Компоненты: `src/components/ui/`  
+Стили и design tokens: `src/index.css`  
+Тема: `src/components/theme-provider.tsx` (по умолчанию `dark`)
 
 ## Деплой
 

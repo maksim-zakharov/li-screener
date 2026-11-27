@@ -1,78 +1,459 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
+/** Home Screen / installed PWA (iOS и др.) */
+@custom-variant standalone (@media (display-mode: standalone));
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary: var(--primary);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: calc(var(--radius) * 0.6);
-    --radius-md: calc(var(--radius) * 0.8);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) * 1.4);
-    --radius-2xl: calc(var(--radius) * 1.8);
-    --radius-3xl: calc(var(--radius) * 2.2);
-    --radius-4xl: calc(var(--radius) * 2.6);
+/**
+ * iOS Home Screen PWA: 100dvh часто короче экрана.
+ * -webkit-fill-available + добор safe-area закрывают зону Home Indicator.
+ */
+@media (display-mode: standalone) {
+  .crypto-arbs-mobile-shell {
+    bottom: 0;
+    min-height: 100dvh;
+    min-height: -webkit-fill-available;
+    min-height: calc(100dvh + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/**
+ * Закругления / Home Indicator: щель под UI = цвет карточки (--card),
+ * как таббар и карточка фильтров. Не --background (#000).
+ */
+html.dark,
+html.dark body {
+  background-color: var(--card);
+}
+
+/**
+ * Нижнее мобильное меню (kit `MobileBottomNav`):
+ * фон карточки до Home Indicator (constant — старый iOS).
+ */
+.mobile-bottom-nav {
+  background-color: var(--card);
+  padding-bottom: constant(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/** @deprecated Используйте `.mobile-bottom-nav` */
+.crypto-arbs-mobile-tabbar {
+  background-color: var(--card);
+  padding-bottom: constant(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Скрытие скроллбара для orderbook */
+.orderbook-scroll-container::-webkit-scrollbar {
+  display: none;
 }
 
 :root {
+    /** Design tokens (light / brand) */
+    --bds-static-black: #000;
+    --bds-static-white: #fff;
+    --bds-gray-t1-title: #000;
+    --bds-gray-t2: #7f838a;
+    --bds-gray-t3: #a1a5ab;
+    --bds-gray-t4-dis: #d5dae0;
+    --bds-gray-ele-border: #dde1e5;
+    --bds-gray-ele-line: #f3f5f7;
+    --bds-gray-ele-divider: #e9ecf0;
+    --bds-gray-bg-page: #f5f7fa;
+    --bds-gray-bg-card: #fff;
+    --bds-gray-bg-float: #fff;
+    --bds-gray-bg-menu: #fff;
+    --bds-brand-600-hover: #ffad52;
+    --bds-brand-700-normal: #ff9c2e;
+    --bds-brand-800-pressed: #f29229;
+    --bds-brand-900-text: #f29229;
+    --bds-trans-hover: rgb(192 210 231 / 12%);
+    --bds-green-700-normal: #06c167;
+    --bds-red-700-normal: #f63649;
+    --bds-red-600-hover: #fc7272;
+    --bds-non-vip: #adb1b8;
+    --bds-empty-svg-line: #f7a600;
+    --bds-badge-sup-text-color: #adb1b8;
+    --bds-font-size-14: 14px;
+    --bds-line-height-14: 20px;
+    --bds-font-size-16: 16px;
+    --bds-line-height-16: 24px;
+    --bds-shadow-l1: 0 2px 8px rgba(0, 0, 0, 0.08);
+    /**
+     * TODO: переименовать временные color-токены (--tmp-*) в осмысленные имена.
+     */
+    --tmp-ef4444: #ef4444;
+
+    --tmp-22c55e: #22c55e;
+
+    --tmp-8e8e8e: #8e8e8e;
+
+    --tmp-fbbf24: #fbbf24;
+
+    --tmp-ffb11a: #ffb11a;
+
+    --tmp-888888: #888888;
+
+    --tmp-20b26c: #20b26c;
+
+    --tmp-38bdf8: #38bdf8;
+
+    --tmp-c084fc: #c084fc;
+
+    --tmp-333333: #333333;
+
+    --tmp-f59e0b: #f59e0b;
+
+    --tmp-00ff00: #00ff00;
+
+    --tmp-3b82f6: #3b82f6;
+
+    --tmp-facc15: #facc15;
+
+    --tmp-089981: #089981;
+
+    --tmp-111827: #111827;
+
+    --tmp-121212: #121212;
+
+    --tmp-7c3aed: #7c3aed;
+
+    --tmp-cccccc: #cccccc;
+
+    --tmp-ff0000: #ff0000;
+
+    --tmp-ffc35c: #ffc35c;
+
+    --tmp-111111: #111111;
+
+    --tmp-15785566: #15785566;
+
+    --tmp-16a34a: #16a34a;
+
+    --tmp-26a69a: #26a69a;
+
+    --tmp-2962ff: #2962ff;
+
+    --tmp-29b6f6: #29b6f6;
+
+    --tmp-5c6bc0: #5c6bc0;
+
+    --tmp-66bb6a: #66bb6a;
+
+    --tmp-787b86: #787b86;
+
+    --tmp-86efac: #86efac;
+
+    --tmp-8d6e63: #8d6e63;
+
+    --tmp-93c5fd: #93c5fd;
+
+    --tmp-94a3b8: #94a3b8;
+
+    --tmp-9ccc65: #9ccc65;
+
+    --tmp-ab47bc: #ab47bc;
+
+    --tmp-d1261b66: #d1261b66;
+
+    --tmp-dc2626: #dc2626;
+
+    --tmp-e53935: #e53935;
+
+    --tmp-e5b800: #e5b800;
+
+    --tmp-ec407a: #ec407a;
+
+    --tmp-ef454a: #ef454a;
+
+    --tmp-ef5350: #ef5350;
+
+    --tmp-f23645: #f23645;
+
+    --tmp-f97316: #f97316;
+
+    --tmp-fca5a5: #fca5a5;
+
+    --tmp-fdba74: #fdba74;
+
+    --tmp-17181e: #17181e;
+
+    --tmp-2196f3: #2196f3;
+
+    --tmp-22d3ee: #22d3ee;
+
+    --tmp-2a2a2a: #2a2a2a;
+
+    --tmp-303030: #303030;
+
+    --tmp-3d3d3d: #3d3d3d;
+
+    --tmp-428bf9: #428bf9;
+
+    --tmp-42a5f5: #42a5f5;
+
+    --tmp-4ade80: #4ade80;
+
+    --tmp-60a5fa: #60a5fa;
+
+    --tmp-78909c: #78909c;
+
+    --tmp-7e57c2: #7e57c2;
+
+    --tmp-9c27b0: #9c27b0;
+
+    --tmp-a1a1aa: #a1a1aa;
+
+    --tmp-c4b5fd: #c4b5fd;
+
+    --tmp-dddddd: #dddddd;
+
+    --tmp-e2e8f0: #e2e8f0;
+
+    --tmp-e4e4e7: #e4e4e7;
+
+    --tmp-eab308: #eab308;
+
+    --tmp-f87171: #f87171;
+
+    --tmp-ff7043: #ff7043;
+
+    --tmp-ff9800: #ff9800;
+
+    --tmp-ffca28: #ffca28;
+
+    --tmp-004d40: #004d40;
+
+    --tmp-00695c: #00695c;
+
+    --tmp-009688: #009688;
+
+    --tmp-01579b: #01579b;
+
+    --tmp-0277bd: #0277bd;
+
+    --tmp-03a9f4: #03a9f4;
+
+    --tmp-0ba264: #0ba264;
+
+    --tmp-0f172a: #0f172a;
+
+    --tmp-131722: #131722;
+
+    --tmp-14b8a6: #14b8a6;
+
+    --tmp-1a237e: #1a237e;
+
+    --tmp-226666: #226666;
+
+    --tmp-283593: #283593;
+
+    --tmp-2a2e39: #2a2e39;
+
+    --tmp-2b2b2b: #2b2b2b;
+
+    --tmp-33691e: #33691e;
+
+    --tmp-34d399: #34d399;
+
+    --tmp-374151: #374151;
+
+    --tmp-3e2723: #3e2723;
+
+    --tmp-3f51b5: #3f51b5;
+
+    --tmp-434651: #434651;
+
+    --tmp-4a148c: #4a148c;
+
+    --tmp-4db6ac: #4db6ac;
+
+    --tmp-4e342e: #4e342e;
+
+    --tmp-4fc3f7: #4fc3f7;
+
+    --tmp-558b2f: #558b2f;
+
+    --tmp-5d606b: #5d606b;
+
+    --tmp-6a1b9a: #6a1b9a;
+
+    --tmp-795548: #795548;
+
+    --tmp-7986cb: #7986cb;
+
+    --tmp-808000: #808000;
+
+    --tmp-80cbc4: #80cbc4;
+
+    --tmp-81d4fa: #81d4fa;
+
+    --tmp-880e4f: #880e4f;
+
+    --tmp-8bc34a: #8bc34a;
+
+    --tmp-9598a1: #9598a1;
+
+    --tmp-9ca3af: #9ca3af;
+
+    --tmp-9d2b2b: #9d2b2b;
+
+    --tmp-9fa8da: #9fa8da;
+
+    --tmp-a1887f: #a1887f;
+
+    --tmp-a78bfa: #a78bfa;
+
+    --tmp-a855f7: #a855f7;
+
+    --tmp-ad1457: #ad1457;
+
+    --tmp-aed581: #aed581;
+
+    --tmp-b2b5be: #b2b5be;
+
+    --tmp-b2dfdb: #b2dfdb;
+
+    --tmp-b3e5fc: #b3e5fc;
+
+    --tmp-b71c1c: #b71c1c;
+
+    --tmp-ba68c8: #ba68c8;
+
+    --tmp-bcaaa4: #bcaaa4;
+
+    --tmp-c5cae9: #c5cae9;
+
+    --tmp-c5e1a5: #c5e1a5;
+
+    --tmp-c62828: #c62828;
+
+    --tmp-c8c8c8: #c8c8c8;
+
+    --tmp-ce93d8: #ce93d8;
+
+    --tmp-d7ccc8: #d7ccc8;
+
+    --tmp-dcedc8: #dcedc8;
+
+    --tmp-e0e3eb: #e0e3eb;
+
+    --tmp-e1bee7: #e1bee7;
+
+    --tmp-e57373: #e57373;
+
+    --tmp-e5e7eb: #e5e7eb;
+
+    --tmp-e65100: #e65100;
+
+    --tmp-e6a100: #e6a100;
+
+    --tmp-e91e63: #e91e63;
+
+    --tmp-ec4899: #ec4899;
+
+    --tmp-ef6c00: #ef6c00;
+
+    --tmp-ef9a9a: #ef9a9a;
+
+    --tmp-f06292: #f06292;
+
+    --tmp-f43f5e: #f43f5e;
+
+    --tmp-f44336: #f44336;
+
+    --tmp-f48fb1: #f48fb1;
+
+    --tmp-f57f17: #f57f17;
+
+    --tmp-f8bbd0: #f8bbd0;
+
+    --tmp-f9a825: #f9a825;
+
+    --tmp-fafafa: #fafafa;
+
+    --tmp-fb7185: #fb7185;
+
+    --tmp-fccbcd: #fccbcd;
+
+    --tmp-ffa726: #ffa726;
+
+    --tmp-ffb74d: #ffb74d;
+
+    --tmp-ffcc80: #ffcc80;
+
+    --tmp-ffe0b2: #ffe0b2;
+
+    --tmp-ffeb3b: #ffeb3b;
+
+    --tmp-ffee58: #ffee58;
+
+    --tmp-fff176: #fff176;
+
+    --tmp-fff3b0: #fff3b0;
+
+    --tmp-fff59d: #fff59d;
+
+
+    --menu-background: oklch(1 0 0);
     --background: oklch(1 0 0);
     --foreground: oklch(0.145 0 0);
+    /** Вторичный цвет текста (заголовки таблиц и т.п.) */
+    --text-secondary: #8c8c8c;
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
+    /** Фон и текст варианта secondary (кнопки и т.п.) */
+    --secondary: #fff;
+    --secondary-foreground: #0f0f0f;
     --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
+    --muted-foreground: var(--bds-non-vip);
     --accent: oklch(0.97 0 0);
     --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
+    --tab-active-background: #4a4a4a;
+    /** Short / sell / ask */
+    --destructive: #e04040;
+    --destructive-foreground: #e04040;
+    /** Фон строк TWAP / Sizes */
+    --destructive-bg: color-mix(in srgb, var(--destructive) 13%, transparent);
+    /** Заливки стакана / кластеров / таймлайна (мягче сплошного) */
+    --destructive-soft: color-mix(in srgb, var(--destructive) 40%, transparent);
+    --destructive-strong: var(--destructive-soft);
+    /** Long / buy / bid */
+    --success: #24ae64;
+    --success-foreground: #24ae64;
+    /** Фон строк TWAP / Sizes */
+    --success-bg: color-mix(in srgb, var(--success) 13%, transparent);
+    /** Заливки стакана / кластеров / таймлайна */
+    --success-soft: color-mix(in srgb, var(--success) 40%, transparent);
+    --success-strong: var(--success-soft);
     --border: oklch(0.922 0 0);
+    /** Разделители строк таблицы (совпадает с --border в светлой теме) */
+    --table-row-border-color: var(--border);
     --input: oklch(0.922 0 0);
+    --placeholder: oklch(0.556 0 0);
     --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --chart-1: oklch(0.646 0.222 41.116);
+    --chart-2: oklch(0.6 0.118 184.704);
+    --chart-3: oklch(0.398 0.07 227.392);
+    --chart-4: oklch(0.828 0.189 84.429);
+    --chart-5: oklch(0.769 0.188 70.08);
     --radius: 0.625rem;
+    --radius-xs: 4px;
+    --size-1: 1px;
+    --size-4: 4px;
+    /** Скроллбар: ширина и цвет ползунка (от --muted-foreground) */
+    --scrollbar-size: 5px;
+    --scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 40%, transparent);
+    --scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+    --scrollbar-thumb-active: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
     --sidebar: oklch(0.985 0 0);
     --sidebar-foreground: oklch(0.145 0 0);
     --sidebar-primary: oklch(0.205 0 0);
@@ -84,47 +465,624 @@
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
+    /** Design tokens (dark) */
+    --bds-static-black: #000;
+    --bds-static-white: #fff;
+    --bds-gray-t1-title: #fff;
+    --bds-gray-t2: #6a6e73;
+    --bds-gray-t3: #494c4f;
+    --bds-gray-t4-dis: #595d61;
+    --bds-gray-ele-border: #404347;
+    --bds-gray-ele-line: #222227;
+    --bds-gray-ele-divider: #222227;
+    --bds-gray-ele-edge: #131415;
+    --bds-gray-bg-page: #000;
+    --bds-gray-bg-area: #101014;
+    --bds-gray-bg-card: #101014;
+    --bds-gray-bg-surface-alt: #101014;
+    --bds-gray-bg-float: #333537;
+    --bds-gray-bg-elevated: #333537;
+    --bds-gray-bg-surface: #131415;
+    --bds-gray-bg-float-surface: #18181a;
+    --bds-gray-bg-container: #1e1f24;
+    --bds-gray-bg-container-alt: #222227;
+    --bds-brand-600-hover: #ffad52;
+    --bds-brand-700-normal: #ff9c2e;
+    --bds-brand-800-pressed: #f29229;
+    --bds-brand-900-focus: #f29229;
+    --bds-brand-900-text: #ff9c2e;
+    --bds-trans-hover: rgb(192 210 231 / 12%);
+    --bds-green-700-normal: #06c167;
+    --bds-red-700-normal: #f63649;
+    --bds-red-600-hover: #fc7272;
+    --bds-non-vip: #adb1b8;
+    --bds-empty-svg-line: #f7a600;
+    --bds-badge-sup-text-color: #f7a600;
+    --bds-shadow-l1: 0 2px 8px rgba(0, 0, 0, 0.32);
+    /** Меню / popover */
+    --bds-gray-bg-menu: #16171a;
+
+    --background: var(--bds-gray-bg-page);
+    --foreground: #dbdbdb;
+    --menu-background: var(--bds-gray-bg-menu);
+    --card: var(--bds-gray-bg-card);
     --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
+    --popover: var(--menu-background);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
+    --primary: var(--bds-brand-700-normal);
+    --primary-foreground: rgb(0, 0, 0);
+    --secondary: rgb(64, 67, 71);
+    --secondary-foreground: rgb(255, 255, 255);
+    --muted: rgb(192 210 231 / 12%);
+    --muted-foreground: var(--bds-non-vip);
     --accent: oklch(0.269 0 0);
     --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
+    /** Short / sell / ask */
+    --destructive: #e04040;
+    --destructive-foreground: #e04040;
+    --destructive-bg: color-mix(in srgb, var(--destructive) 13%, transparent);
+    --destructive-soft: color-mix(in srgb, var(--destructive) 40%, transparent);
+    --destructive-strong: var(--destructive-soft);
+    /** Long / buy / bid */
+    --success: #24ae64;
+    --success-foreground: #24ae64;
+    --success-bg: color-mix(in srgb, var(--success) 13%, transparent);
+    --success-soft: color-mix(in srgb, var(--success) 40%, transparent);
+    --success-strong: var(--success-soft);
+    --border: #25282c;
+    /** Разделители строк таблицы — как фон приложения */
+    --table-row-border-color: var(--background);
+    --input: var(--bds-gray-ele-line);
+    --placeholder: #4a4a4a;
+    --ring: oklch(0.439 0 0);
+    --chart-1: oklch(0.488 0.243 264.376);
+    --chart-2: oklch(0.696 0.17 162.48);
+    --chart-3: oklch(0.769 0.188 70.08);
+    --chart-4: oklch(0.627 0.265 303.9);
+    --chart-5: oklch(0.645 0.246 16.439);
+    --sidebar: rgb(30, 44, 57);
+    --sidebar-foreground: rgba(166, 189, 213, 0.45);
     --sidebar-primary: oklch(0.488 0.243 264.376);
     --sidebar-primary-foreground: oklch(0.985 0 0);
     --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-accent-foreground: #b3c7db;
+    --sidebar-border: oklch(0.269 0 0);
+    --sidebar-ring: oklch(0.439 0 0);
+}
+
+@theme inline {
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-text-secondary: var(--text-secondary);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-success: var(--success);
+    --color-success-foreground: var(--success-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+    /** Tailwind color-* aliases for design tokens */
+    --color-bds-brand-600-hover: var(--bds-brand-600-hover);
+    --color-bds-brand-700-normal: var(--bds-brand-700-normal);
+    --color-bds-brand-900-text: var(--bds-brand-900-text);
+    --color-bds-gray-t1-title: var(--bds-gray-t1-title);
+    --color-bds-gray-t2: var(--bds-gray-t2);
+    --color-bds-gray-t3: var(--bds-gray-t3);
+    --color-bds-gray-ele-border: var(--bds-gray-ele-border);
+    --color-bds-gray-ele-line: var(--bds-gray-ele-line);
+    --color-bds-gray-bg-card: var(--bds-gray-bg-card);
+    --color-bds-gray-bg-float: var(--bds-gray-bg-float);
+    --color-bds-non-vip: var(--bds-non-vip);
+    --color-bds-static-white: var(--bds-static-white);
+    --color-bds-empty-svg-line: var(--bds-empty-svg-line);
+    --color-bds-red-700-normal: var(--bds-red-700-normal);
+
+    /** TODO: переименовать --color-tmp-* вместе с --tmp-* */
+    --color-tmp-ef4444: var(--tmp-ef4444);
+    --color-tmp-22c55e: var(--tmp-22c55e);
+    --color-tmp-8e8e8e: var(--tmp-8e8e8e);
+    --color-tmp-fbbf24: var(--tmp-fbbf24);
+    --color-tmp-ffb11a: var(--tmp-ffb11a);
+    --color-tmp-888888: var(--tmp-888888);
+    --color-tmp-20b26c: var(--tmp-20b26c);
+    --color-tmp-38bdf8: var(--tmp-38bdf8);
+    --color-tmp-c084fc: var(--tmp-c084fc);
+    --color-tmp-333333: var(--tmp-333333);
+    --color-tmp-f59e0b: var(--tmp-f59e0b);
+    --color-tmp-00ff00: var(--tmp-00ff00);
+    --color-tmp-3b82f6: var(--tmp-3b82f6);
+    --color-tmp-facc15: var(--tmp-facc15);
+    --color-tmp-089981: var(--tmp-089981);
+    --color-tmp-111827: var(--tmp-111827);
+    --color-tmp-121212: var(--tmp-121212);
+    --color-tmp-7c3aed: var(--tmp-7c3aed);
+    --color-tmp-cccccc: var(--tmp-cccccc);
+    --color-tmp-ff0000: var(--tmp-ff0000);
+    --color-tmp-ffc35c: var(--tmp-ffc35c);
+    --color-tmp-111111: var(--tmp-111111);
+    --color-tmp-15785566: var(--tmp-15785566);
+    --color-tmp-16a34a: var(--tmp-16a34a);
+    --color-tmp-26a69a: var(--tmp-26a69a);
+    --color-tmp-2962ff: var(--tmp-2962ff);
+    --color-tmp-29b6f6: var(--tmp-29b6f6);
+    --color-tmp-5c6bc0: var(--tmp-5c6bc0);
+    --color-tmp-66bb6a: var(--tmp-66bb6a);
+    --color-tmp-787b86: var(--tmp-787b86);
+    --color-tmp-86efac: var(--tmp-86efac);
+    --color-tmp-8d6e63: var(--tmp-8d6e63);
+    --color-tmp-93c5fd: var(--tmp-93c5fd);
+    --color-tmp-94a3b8: var(--tmp-94a3b8);
+    --color-tmp-9ccc65: var(--tmp-9ccc65);
+    --color-tmp-ab47bc: var(--tmp-ab47bc);
+    --color-tmp-d1261b66: var(--tmp-d1261b66);
+    --color-tmp-dc2626: var(--tmp-dc2626);
+    --color-tmp-e53935: var(--tmp-e53935);
+    --color-tmp-e5b800: var(--tmp-e5b800);
+    --color-tmp-ec407a: var(--tmp-ec407a);
+    --color-tmp-ef454a: var(--tmp-ef454a);
+    --color-tmp-ef5350: var(--tmp-ef5350);
+    --color-tmp-f23645: var(--tmp-f23645);
+    --color-tmp-f97316: var(--tmp-f97316);
+    --color-tmp-fca5a5: var(--tmp-fca5a5);
+    --color-tmp-fdba74: var(--tmp-fdba74);
+    --color-tmp-17181e: var(--tmp-17181e);
+    --color-tmp-2196f3: var(--tmp-2196f3);
+    --color-tmp-22d3ee: var(--tmp-22d3ee);
+    --color-tmp-2a2a2a: var(--tmp-2a2a2a);
+    --color-tmp-303030: var(--tmp-303030);
+    --color-tmp-3d3d3d: var(--tmp-3d3d3d);
+    --color-tmp-428bf9: var(--tmp-428bf9);
+    --color-tmp-42a5f5: var(--tmp-42a5f5);
+    --color-tmp-4ade80: var(--tmp-4ade80);
+    --color-tmp-60a5fa: var(--tmp-60a5fa);
+    --color-tmp-78909c: var(--tmp-78909c);
+    --color-tmp-7e57c2: var(--tmp-7e57c2);
+    --color-tmp-9c27b0: var(--tmp-9c27b0);
+    --color-tmp-a1a1aa: var(--tmp-a1a1aa);
+    --color-tmp-c4b5fd: var(--tmp-c4b5fd);
+    --color-tmp-dddddd: var(--tmp-dddddd);
+    --color-tmp-e2e8f0: var(--tmp-e2e8f0);
+    --color-tmp-e4e4e7: var(--tmp-e4e4e7);
+    --color-tmp-eab308: var(--tmp-eab308);
+    --color-tmp-f87171: var(--tmp-f87171);
+    --color-tmp-ff7043: var(--tmp-ff7043);
+    --color-tmp-ff9800: var(--tmp-ff9800);
+    --color-tmp-ffca28: var(--tmp-ffca28);
+    --color-tmp-004d40: var(--tmp-004d40);
+    --color-tmp-00695c: var(--tmp-00695c);
+    --color-tmp-009688: var(--tmp-009688);
+    --color-tmp-01579b: var(--tmp-01579b);
+    --color-tmp-0277bd: var(--tmp-0277bd);
+    --color-tmp-03a9f4: var(--tmp-03a9f4);
+    --color-tmp-0ba264: var(--tmp-0ba264);
+    --color-tmp-0f172a: var(--tmp-0f172a);
+    --color-tmp-131722: var(--tmp-131722);
+    --color-tmp-14b8a6: var(--tmp-14b8a6);
+    --color-tmp-1a237e: var(--tmp-1a237e);
+    --color-tmp-226666: var(--tmp-226666);
+    --color-tmp-283593: var(--tmp-283593);
+    --color-tmp-2a2e39: var(--tmp-2a2e39);
+    --color-tmp-2b2b2b: var(--tmp-2b2b2b);
+    --color-tmp-33691e: var(--tmp-33691e);
+    --color-tmp-34d399: var(--tmp-34d399);
+    --color-tmp-374151: var(--tmp-374151);
+    --color-tmp-3e2723: var(--tmp-3e2723);
+    --color-tmp-3f51b5: var(--tmp-3f51b5);
+    --color-tmp-434651: var(--tmp-434651);
+    --color-tmp-4a148c: var(--tmp-4a148c);
+    --color-tmp-4db6ac: var(--tmp-4db6ac);
+    --color-tmp-4e342e: var(--tmp-4e342e);
+    --color-tmp-4fc3f7: var(--tmp-4fc3f7);
+    --color-tmp-558b2f: var(--tmp-558b2f);
+    --color-tmp-5d606b: var(--tmp-5d606b);
+    --color-tmp-6a1b9a: var(--tmp-6a1b9a);
+    --color-tmp-795548: var(--tmp-795548);
+    --color-tmp-7986cb: var(--tmp-7986cb);
+    --color-tmp-808000: var(--tmp-808000);
+    --color-tmp-80cbc4: var(--tmp-80cbc4);
+    --color-tmp-81d4fa: var(--tmp-81d4fa);
+    --color-tmp-880e4f: var(--tmp-880e4f);
+    --color-tmp-8bc34a: var(--tmp-8bc34a);
+    --color-tmp-9598a1: var(--tmp-9598a1);
+    --color-tmp-9ca3af: var(--tmp-9ca3af);
+    --color-tmp-9d2b2b: var(--tmp-9d2b2b);
+    --color-tmp-9fa8da: var(--tmp-9fa8da);
+    --color-tmp-a1887f: var(--tmp-a1887f);
+    --color-tmp-a78bfa: var(--tmp-a78bfa);
+    --color-tmp-a855f7: var(--tmp-a855f7);
+    --color-tmp-ad1457: var(--tmp-ad1457);
+    --color-tmp-aed581: var(--tmp-aed581);
+    --color-tmp-b2b5be: var(--tmp-b2b5be);
+    --color-tmp-b2dfdb: var(--tmp-b2dfdb);
+    --color-tmp-b3e5fc: var(--tmp-b3e5fc);
+    --color-tmp-b71c1c: var(--tmp-b71c1c);
+    --color-tmp-ba68c8: var(--tmp-ba68c8);
+    --color-tmp-bcaaa4: var(--tmp-bcaaa4);
+    --color-tmp-c5cae9: var(--tmp-c5cae9);
+    --color-tmp-c5e1a5: var(--tmp-c5e1a5);
+    --color-tmp-c62828: var(--tmp-c62828);
+    --color-tmp-c8c8c8: var(--tmp-c8c8c8);
+    --color-tmp-ce93d8: var(--tmp-ce93d8);
+    --color-tmp-d7ccc8: var(--tmp-d7ccc8);
+    --color-tmp-dcedc8: var(--tmp-dcedc8);
+    --color-tmp-e0e3eb: var(--tmp-e0e3eb);
+    --color-tmp-e1bee7: var(--tmp-e1bee7);
+    --color-tmp-e57373: var(--tmp-e57373);
+    --color-tmp-e5e7eb: var(--tmp-e5e7eb);
+    --color-tmp-e65100: var(--tmp-e65100);
+    --color-tmp-e6a100: var(--tmp-e6a100);
+    --color-tmp-e91e63: var(--tmp-e91e63);
+    --color-tmp-ec4899: var(--tmp-ec4899);
+    --color-tmp-ef6c00: var(--tmp-ef6c00);
+    --color-tmp-ef9a9a: var(--tmp-ef9a9a);
+    --color-tmp-f06292: var(--tmp-f06292);
+    --color-tmp-f43f5e: var(--tmp-f43f5e);
+    --color-tmp-f44336: var(--tmp-f44336);
+    --color-tmp-f48fb1: var(--tmp-f48fb1);
+    --color-tmp-f57f17: var(--tmp-f57f17);
+    --color-tmp-f8bbd0: var(--tmp-f8bbd0);
+    --color-tmp-f9a825: var(--tmp-f9a825);
+    --color-tmp-fafafa: var(--tmp-fafafa);
+    --color-tmp-fb7185: var(--tmp-fb7185);
+    --color-tmp-fccbcd: var(--tmp-fccbcd);
+    --color-tmp-ffa726: var(--tmp-ffa726);
+    --color-tmp-ffb74d: var(--tmp-ffb74d);
+    --color-tmp-ffcc80: var(--tmp-ffcc80);
+    --color-tmp-ffe0b2: var(--tmp-ffe0b2);
+    --color-tmp-ffeb3b: var(--tmp-ffeb3b);
+    --color-tmp-ffee58: var(--tmp-ffee58);
+    --color-tmp-fff176: var(--tmp-fff176);
+    --color-tmp-fff3b0: var(--tmp-fff3b0);
+    --color-tmp-fff59d: var(--tmp-fff59d);
+
+    --color-chart-1: var(--chart-1);
+    --color-chart-2: var(--chart-2);
+    --color-chart-3: var(--chart-3);
+    --color-chart-4: var(--chart-4);
+    --color-chart-5: var(--chart-5);
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+    --color-sidebar: var(--sidebar);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-ring: var(--sidebar-ring);
+}
+
+.dark {
+    --color-primary: var(--bds-brand-700-normal);
+    --color-primary-foreground: rgb(0, 0, 0);
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+    * {
+        @apply border-border outline-ring/50;
+        --tw-border-style: solid;
     }
-  body {
-    @apply bg-background text-foreground;
+    body {
+        @apply bg-background text-foreground;
     }
-  html {
-    @apply font-sans;
+}
+
+@layer utilities {
+    .col-span-4{
+        grid-column: span 4 / span 4;
     }
+    .col-span-6{
+        grid-column: span 6 / span 6;
+    }
+    .col-span-8{
+        grid-column: span 8 / span 8;
+    }
+    .col-span-12{
+        grid-column: span 12 / span 12;
+    }
+    .col-span-24{
+        grid-column: span 24 / span 24;
+    }
+}
+
+body {
+    margin: 0;
+}
+
+.buy {
+    /*background-color: rgba(11,162,100,0.4);*/
+    /*color: rgb(166,189,213)*/
+    background-color: var(--tmp-15785566);
+    color: var(--success);
+}
+
+.sell {
+    /*background-color: rgba(157,43,56,0.4);*/
+    /*color: rgb(166,189,213)*/
+    background-color: var(--tmp-d1261b66);
+    color: var(--destructive);
+}
+
+.hoverable {
+    cursor: pointer;
+
+    &:hover td {
+        background-color: rgba(179, 199, 219, .2) !important;
+    }
+}
+
+.relative {
+    position: relative;
+}
+
+.fullscreen {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 100;
+    width: 100%;
+    height: 100vh;
+}
+
+.profitRow{
+    background-color: var(--tmp-15785566);
+    color: rgb(44, 232, 156);
+}
+
+.lossRow{
+    background-color: var(--tmp-d1261b66);
+    color: var(--destructive);
+}
+
+.profitCell{
+    /*background-color: var(--tmp-15785566);*/
+    color: var(--success);
+}
+
+.lossCell{
+    /*background-color: var(--tmp-d1261b66);*/
+    color: var(--destructive);
+}
+
+.rowOdd{
+    cursor: pointer;
+    background: rgb(30, 44, 57);
+    &:hover{
+
+    background-color: rgb(44,60,75);
+}
+}
+
+.highlightRow{
+    cursor: pointer;
+    background: rgb(98,161,255, 0.4) !important;
+    &:hover{
+
+        background-color:rgb(98,161,255);
+    }
+}
+
+.rowEven{
+    cursor: pointer;
+    background-color: rgba(33, 49, 63, 0.4);
+    &:hover{
+
+    background-color: rgb(44,60,75);
+}
+}
+
+.rowHover{
+    background-color: rgb(44,60,75);
+}
+
+.img{
+    width: 16px;
+    height: 16px;
+    background-size: 100%;
+    border-radius: 50%;
+}
+
+a{
+    color: rgb(98,161,255);
+    &:hover{
+    text-decoration: underline;
+}
+}
+
+/* Тикеры в позициях / открытых ордерах: подчёркивание отключаем поверх глобального a:hover */
+a.crypto-arbs-ticker-link,
+a.crypto-arbs-ticker-link:hover {
+    text-decoration: none !important;
+}
+
+/* Ссылки в меню шапки — серый текст, как в остальном интерфейсе */
+header nav a {
+    color: var(--foreground);
+    text-decoration: none;
+}
+header nav a:hover {
+    color: var(--tmp-ffb11a);
+    background-color: rgba(255, 255, 255, 0.06);
+    text-decoration: none;
+}
+
+/* Выпадающие меню Forex, Тест, Арбитражи, Бэктестинг и Скальпинг — стандартный цвет текста темы */
+[data-forex-dropdown] a,
+[data-test-dropdown] a,
+[data-arbs-dropdown] a,
+[data-backtesting-dropdown] a,
+[data-scalping-dropdown] a {
+    color: var(--foreground);
+    text-decoration: none;
+}
+[data-forex-dropdown] a:hover,
+[data-test-dropdown] a:hover,
+[data-arbs-dropdown] a:hover,
+[data-backtesting-dropdown] a:hover,
+[data-scalping-dropdown] a:hover {
+    color: var(--tmp-ffb11a);
+    background-color: rgba(255, 255, 255, 0.06);
+    text-decoration: none;
+}
+
+/* Sonner Toast Styles */
+[data-sonner-toaster] {
+    /* Потолок ширины; сам тост — по контенту (fit-content). */
+    --width: 320px;
+    --toast-icon-margin-end: 2px;
+}
+
+[data-sonner-toast] {
+    background-color: var(--bds-gray-bg-float) !important;
+    color: var(--bds-static-white) !important;
+    border: none !important;
+    border-radius: 0.5rem !important;
+    padding: 0.5rem 0.75rem !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+    width: fit-content !important;
+    max-width: min(var(--width), calc(100vw - 2rem)) !important;
+    gap: 4px !important;
+    /* Иконка на уровне заголовка, а не по центру title+description */
+    align-items: flex-start !important;
+}
+
+[data-sonner-toast] [data-title] {
+    font-size: 0.875rem !important; /* text-sm */
+    line-height: 1.25rem !important;
+    font-weight: 500 !important; /* font-medium */
+    text-align: left !important;
+}
+
+[data-sonner-toast][data-type="success"] {
+    background-color: var(--bds-gray-bg-float) !important;
+    color: var(--bds-static-white) !important;
+    border: none !important;
+}
+
+[data-sonner-toast][data-type="success"] [data-icon] {
+    color: rgb(44, 232, 156) !important;
+}
+
+[data-sonner-toast] [data-icon] {
+    width: 16px !important;
+    height: 16px !important;
+    margin-top: 2px !important; /* оптика с line-height 20px у title */
+}
+
+[data-sonner-toast] [data-icon] svg {
+    width: 16px !important;
+    height: 16px !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+    background-color: var(--bds-gray-bg-float) !important;
+    color: var(--bds-static-white) !important;
+    border: none !important;
+}
+
+[data-sonner-toast][data-type="error"] [data-icon] {
+    color: var(--destructive) !important;
+}
+
+[data-sonner-toast] [data-description] {
+    color: var(--bds-gray-t2) !important;
+    font-size: 0.75rem !important; /* text-xs */
+    line-height: 1rem !important;
+    opacity: 0.9 !important;
+    text-align: left !important;
+    margin: 0 !important;
+}
+
+/* Border для шапки выбранного спреда */
+.selected-arb-header {
+    border: 1px solid rgba(166, 189, 213, 0.2) !important;
+}
+
+/* Единые настройки скроллбара для всего проекта */
+/* Скроллбар поверх контента (overlay) для всех элементов с overflow */
+/* Webkit scrollbar стили */
+*::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 2px;
+    transition: background 0.2s ease;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-active);
+}
+
+/* Firefox scrollbar - скроллбар поверх контента */
+.overflow-y-auto,
+.overflow-y-scroll,
+.overflow-auto,
+.overflow-x-auto,
+.overflow-x-scroll,
+.overflow {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-gutter: auto;
+}
+
+/* Для webkit браузеров используем overlay для скроллбара поверх контента */
+.overflow-y-auto,
+.overflow-y-scroll,
+.overflow-auto {
+    overflow-y: overlay;
+}
+
+/* Fallback для браузеров без поддержки overlay */
+@supports not (overflow: overlay) {
+.overflow-y-auto,
+.overflow-y-scroll,
+.overflow-auto {
+        overflow-y: auto;
+    }
+}
+
+@keyframes landing-marquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.landing-marquee-track {
+  animation: landing-marquee var(--landing-marquee-duration, 45s) linear infinite;
+}
+
+.landing-marquee-track:hover {
+  animation-play-state: paused;
 }
