@@ -2,7 +2,6 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { Toaster } from '@/components/ui/sonner'
-import { AboutPage } from '@/pages/AboutPage'
 import { ArbitragesPage } from '@/pages/ArbitragesPage'
 import { HomePage } from '@/pages/HomePage'
 
@@ -15,7 +14,6 @@ function App() {
           <Route element={<AppLayout />}>
             <Route index element={<HomePage />} />
             <Route path="arbitrages" element={<ArbitragesPage />} />
-            <Route path="about" element={<AboutPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

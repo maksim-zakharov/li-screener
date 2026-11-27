@@ -21,18 +21,30 @@ interface ArbitragesListProps {
   selectedTicker: string
   /** Выбор пары */
   onSelect: (pair: ArbPair) => void
+  /** Live-котировки (если не переданы — подписка внутри) */
+  quotes?: Record<string, ArbQuoteRow>
+  /** Показывать карточку деталей под списком (десктоп) */
+  showDetails?: boolean
   /** Доп. класс контейнера */
   className?: string
 }
 
 /**
- * Правая колонка: список котировок арбитражей + карточка выбранного спреда.
+ * Список котировок арбитражей (+ опционально карточка выбранного спреда).
  */
-export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: ArbitragesListProps) {
+export function ArbitragesList({
+  pairs,
+  selectedTicker,
+  onSelect,
+  quotes: quotesProp,
+  showDetails = true,
+  className,
+}: ArbitragesListProps) {
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('change')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const quotes = useArbQuotes(pairs)
+  const quotesFromHook = useArbQuotes(quotesProp ? [] : pairs)
+  const quotes = quotesProp ?? quotesFromHook
   const selected = pairs.find((p) => p.ticker === selectedTicker) ?? pairs[0]
 
   const filteredPairs = useMemo(() => {
@@ -86,7 +98,7 @@ export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: A
   return (
     <aside
       className={cn(
-        'flex w-[440px] shrink-0 flex-col border-l border-[rgba(166,189,213,0.2)] bg-tmp-17181e',
+        'flex min-h-0 w-[440px] shrink-0 flex-col border-l border-[rgba(166,189,213,0.2)] bg-tmp-17181e',
         className,
       )}
     >
@@ -177,7 +189,7 @@ export function ArbitragesList({ pairs, selectedTicker, onSelect, className }: A
         )}
       </ul>
 
-      {selected ? (
+      {showDetails && selected ? (
         <ArbSpreadDetailsCard
           pair={selected}
           currentSpread={quotes[selected.ticker]?.last ?? null}
