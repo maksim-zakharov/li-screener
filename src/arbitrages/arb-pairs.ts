@@ -153,6 +153,8 @@ export const ARB_FOREX_PAIRS: ArbPair[] = [
   ratioPair('EURRUBF/CNYRUBF', 'EUR / CNY · вечные', [1, 8], 1),
   ratioPair('EURRUBF/USDRUBF/ED-12.26', 'EUR ₽ / USD ₽ vs ED', [1, 1, 1], 1),
   ratioPair('EURRUBF/USDRUBF/ED-3.27', 'EUR ₽ / USD ₽ vs ED · H27', [1, 1, 1], 1),
+  calendarPair('GLDRUBF/GL-12.26', 'Золото · вечный vs квартал'),
+  calendarPair('GLDRUBF/GL-3.27', 'Золото · вечный vs квартал · H27'),
   metalTriplePair('GLDRUBF*31.1/USDRUBF/GOLD-12.26', 'Золото ₽ → $/oz vs GOLD'),
   metalTriplePair('GLDRUBF*31.1/SI-12.26/GOLD-12.26', 'GLDRUBF / SI / GOLD'),
   metalTriplePair('GLDRUBF*31.1/USDRUBF/GOLD-3.27', 'Золото ₽ → $/oz vs GOLD · H27'),

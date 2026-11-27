@@ -60,6 +60,67 @@ const ENABLED_FEATURES: TradingTerminalFeatureset[] = [
   'determine_first_data_request_size_using_visible_range' as TradingTerminalFeatureset,
 ]
 
+/** Нормализация тикера для сравнения (без биржи, upper). */
+function normalizeChartSymbol(value: string): string {
+  return value
+    .trim()
+    .replace(/^MOEX:/i, '')
+    .replace(/^SPBX:/i, '')
+    .toUpperCase()
+}
+
+/**
+ * Ставит тикер на activeChart с retry и защитой от устаревших ответов.
+ */
+async function applyChartSymbol(
+  chartWidget: IChartingLibraryWidget,
+  symbol: string,
+  genRef: { current: number },
+): Promise<void> {
+  const next = symbol.trim()
+  if (!next) {
+    return
+  }
+  const gen = ++genRef.current
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (gen !== genRef.current) {
+      return
+    }
+    try {
+      const chartApi = chartWidget.activeChart()
+      if (!chartApi) {
+        await new Promise((resolve) => window.setTimeout(resolve, 50))
+        continue
+      }
+      const current = normalizeChartSymbol(String(chartApi.symbol?.() ?? ''))
+      if (current === normalizeChartSymbol(next)) {
+        return
+      }
+      const ok = await Promise.resolve(chartApi.setSymbol(next))
+      if (gen !== genRef.current) {
+        return
+      }
+      const after = normalizeChartSymbol(String(chartApi.symbol?.() ?? ''))
+      if (ok !== false || after === normalizeChartSymbol(next)) {
+        try {
+          chartApi.reloadLineToolsFromServer?.()
+        } catch {
+          // ignore
+        }
+        return
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 80))
+    } catch (err) {
+      if (gen !== genRef.current) {
+        return
+      }
+      console.warn('AlorChart setSymbol:', err)
+      await new Promise((resolve) => window.setTimeout(resolve, 80))
+    }
+  }
+}
+
 /**
  * TradingView-график Alor (MOEX) с полным UI.
  * Виджет создаётся один раз; смена тикера — `setSymbol` без remount (как TradeFi).
@@ -76,6 +137,8 @@ export function AlorChart({
   const widgetRef = useRef<IChartingLibraryWidget | null>(null)
   const propsRef = useRef({ symbol, interval, locale, showWidgetBar })
   propsRef.current = { symbol, interval, locale, showWidgetBar }
+  /** Поколение setSymbol — отсекает устаревшие async-ответы (ready / load_last_chart / клик). */
+  const setSymbolGenRef = useRef(0)
 
   const [tokenMissing, setTokenMissing] = useState(() => !getAlorRefreshToken())
   const [error, setError] = useState<string | null>(null)
@@ -195,9 +258,20 @@ export function AlorChart({
         // ignore
       }
       setChartReadyVersion((v) => v + 1)
+      /**
+       * load_last_chart подменяет тикер после ready — ещё раз жёстко ставим props.
+       * Поколение отсечёт ответ, если пользователь уже кликнул другой тикер.
+       */
+      window.setTimeout(() => {
+        if (widgetRef.current !== chartWidget) {
+          return
+        }
+        void applyChartSymbol(chartWidget, propsRef.current.symbol, setSymbolGenRef)
+      }, 100)
     })
 
     return () => {
+      setSymbolGenRef.current += 1
       try {
         chartWidget.remove()
       } catch {
@@ -219,33 +293,7 @@ export function AlorChart({
     if (!next || !chartWidget || chartReadyVersion <= 0) {
       return
     }
-
-    let cancelled = false
-    void (async () => {
-      try {
-        const chartApi = chartWidget.activeChart()
-        if (!chartApi || cancelled || widgetRef.current !== chartWidget) {
-          return
-        }
-        const current = String(chartApi.symbol?.() ?? '').trim()
-        if (current.toUpperCase() === next.toUpperCase()) {
-          return
-        }
-        await Promise.resolve(chartApi.setSymbol(next))
-        // TV часто не подтягивает рисунки сам после setSymbol — форсим reload из adapter.
-        try {
-          chartApi.reloadLineToolsFromServer?.()
-        } catch {
-          // ignore
-        }
-      } catch (err) {
-        console.warn('AlorChart setSymbol:', err)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
+    void applyChartSymbol(chartWidget, next, setSymbolGenRef)
   }, [symbol, chartReadyVersion])
 
   const sizeStyle = typeof height === 'number' ? { height } : { height }
