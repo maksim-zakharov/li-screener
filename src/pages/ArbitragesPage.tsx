@@ -142,6 +142,12 @@ export function ArbitragesPage() {
               <ArbPositionsPanel
                 selectedTicker={selected.ticker}
                 quotes={quotes}
+                onSelectTicker={(ticker) => {
+                  const pair = ARB_PAIRS.find((item) => item.ticker === ticker)
+                  if (pair) {
+                    onSelect(pair)
+                  }
+                }}
                 className="max-h-[42%] overflow-hidden"
               />
             </div>
@@ -201,6 +207,12 @@ export function ArbitragesPage() {
         <ArbPositionsPanel
           selectedTicker={selected.ticker}
           quotes={quotes}
+          onSelectTicker={(ticker) => {
+            const pair = ARB_PAIRS.find((item) => item.ticker === ticker)
+            if (pair) {
+              onSelect(pair)
+            }
+          }}
           className="h-[220px] overflow-hidden"
         />
       </div>

@@ -31,6 +31,9 @@ const ACCOUNT_ID = 'arb-readonly' as AccountId
 
 const TRADE_DISABLED = 'С графика нельзя выставлять и отменять заявки'
 
+/** Шаг цены спреда на графике (совпадает с minTick). */
+const SPREAD_PIP_SIZE = 0.001
+
 /** Broker: позиции + native TP/SL bracket-ордера; новые заявки с графика запрещены. */
 export const ARB_READONLY_BROKER_CONFIG: SingleBrokerMetaInfo = {
   configFlags: {
@@ -71,12 +74,15 @@ export class ArbReadonlyBroker implements IBrokerTerminal {
   private readonly _published = new Map<string, Position>()
   /** Bracket-ордера по id (`tp:` / `sl:` + positionId). */
   private readonly _brackets = new Map<string, BracketOrder>()
+  /** Символы с активной подпиской pipValue (TP/SL Money PnL). */
+  private readonly _pipValueSubscriptions = new Set<string>()
   private _destroyed = false
 
   constructor(host: IBrokerConnectionAdapterHost) {
     this._host = host
     this._unsubscribe = subscribeArbBrokerChartPositions(() => {
       this._syncPositions()
+      this._pushPipValueUpdates()
     })
     this._syncPositions()
   }
@@ -86,6 +92,7 @@ export class ArbReadonlyBroker implements IBrokerTerminal {
     this._unsubscribe()
     this._published.clear()
     this._brackets.clear()
+    this._pipValueSubscriptions.clear()
   }
 
   connectionStatus(): ConnectionStatus {
@@ -129,14 +136,32 @@ export class ArbReadonlyBroker implements IBrokerTerminal {
   }
 
   async symbolInfo(symbol: string): Promise<InstrumentInfo> {
+    const pipValue = resolveSpreadPipValue(symbol, SPREAD_PIP_SIZE)
     return {
       qty: { min: 1, max: 1_000_000, step: 1, default: 1 },
-      pipValue: 1,
-      pipSize: 0.001,
-      minTick: 0.001,
+      pipValue,
+      pipSize: SPREAD_PIP_SIZE,
+      minTick: SPREAD_PIP_SIZE,
       description: symbol,
       brokerSymbol: symbol,
     }
+  }
+
+  /**
+   * Динамический pipValue: TT считает PnL brackets как Δ/pipSize×pipValue×qty.
+   * Калибруем под pointValueRub из таблицы позиций.
+   */
+  subscribePipValue(symbol: string): void {
+    const trimmed = symbol.trim()
+    if (!trimmed) {
+      return
+    }
+    this._pipValueSubscriptions.add(trimmed)
+    this._pushPipValueForSymbol(trimmed)
+  }
+
+  unsubscribePipValue(symbol: string): void {
+    this._pipValueSubscriptions.delete(symbol.trim())
   }
 
   accountManagerInfo(): AccountManagerInfo {
@@ -336,6 +361,30 @@ export class ArbReadonlyBroker implements IBrokerTerminal {
       console.warn('Arb broker: cancel bracket', orderId, err)
     }
   }
+
+  private _pushPipValueUpdates(): void {
+    if (this._destroyed) {
+      return
+    }
+    for (const symbol of this._pipValueSubscriptions) {
+      this._pushPipValueForSymbol(symbol)
+    }
+  }
+
+  private _pushPipValueForSymbol(symbol: string): void {
+    const pipValue = resolveSpreadPipValue(symbol, SPREAD_PIP_SIZE)
+    if (!(pipValue > 0)) {
+      return
+    }
+    try {
+      this._host.pipValueUpdate(symbol, {
+        buyPipValue: pipValue,
+        sellPipValue: pipValue,
+      })
+    } catch (err) {
+      console.warn('Arb broker: pipValueUpdate', symbol, err)
+    }
+  }
 }
 
 /** Фабрика для `broker_factory`. */
@@ -364,6 +413,29 @@ function resolveBracketPrice(value: number | undefined): number | null {
     return null
   }
   return value
+}
+
+/**
+ * pipValue для Money-PnL brackets:
+ * TT: |tp−avg|/pipSize × pipValue × qty  →  pipValue = pointValueRub × pipSize / qty.
+ * Таблица: |tp−avg| × pointValueRub.
+ */
+function resolveSpreadPipValue(symbol: string, pipSize: number): number {
+  const trimmed = symbol.trim()
+  const row =
+    getArbBrokerChartPositions().find((item) => item.symbol === trimmed) ??
+    getArbBrokerChartPositions().find((item) => item.symbol.trim() === trimmed)
+  if (!row || !(row.qty > 0)) {
+    return 1
+  }
+  const step = pipSize > 0 && Number.isFinite(pipSize) ? pipSize : 1
+  if (row.pointValueRub != null && row.pointValueRub > 0) {
+    const pipValue = (row.pointValueRub * step) / row.qty
+    if (Number.isFinite(pipValue) && pipValue > 0) {
+      return pipValue
+    }
+  }
+  return 1
 }
 
 function bracketOrderId(positionId: string, kind: 'tp' | 'sl'): string {

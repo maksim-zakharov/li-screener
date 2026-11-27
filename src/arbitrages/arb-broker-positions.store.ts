@@ -12,6 +12,11 @@ export interface ArbBrokerChartPosition {
   side: 'buy' | 'sell'
   /** PnL ₽ (опционально). */
   pl?: number
+  /**
+   * ₽ за 1 пункт спреда (как в таблице): volume×refLots/100.
+   * Нужен, чтобы TV считал PnL TP/SL: Δ/pipSize×pipValue×qty.
+   */
+  pointValueRub?: number
   /** Тейк-профит (цена спреда). */
   takeProfit?: number
   /** Стоп-лосс (цена спреда). */

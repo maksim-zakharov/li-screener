@@ -19,9 +19,19 @@ import {
   type ArbPosition,
   type ArbPositionPnl,
 } from '@/arbitrages/arb-positions'
+import { calcSpreadPointValueRub } from '@/arbitrages/moex-iss-margin'
 import { useLegMargins } from '@/arbitrages/useLegMargins'
 import { AddArbPositionDialog } from '@/components/AddArbPositionDialog'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -37,22 +47,26 @@ interface ArbPositionsPanelProps {
   selectedTicker: string
   /** Live-котировки спредов (тот же store, что список слева) */
   quotes: Readonly<Record<string, ArbQuoteRow>>
+  /** Выбор спреда в вотчлисте и на графике */
+  onSelectTicker?: (ticker: string) => void
   /** Доп. класс */
   className?: string
 }
 
 /**
  * Таблица позиций — разметка как PositionsWidget; PnL от live last как в списке спредов.
- * Клик по строке — редактирование.
+ * Клик по спреду — выбор на графике; «Изменить» — диалог; «Закрыть» — подтверждение.
  */
 export function ArbPositionsPanel({
   selectedTicker,
   quotes,
+  onSelectTicker,
   className,
 }: ArbPositionsPanelProps) {
   const [positions, setPositions] = useState<ArbPosition[]>(() => loadArbPositions())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingPosition, setEditingPosition] = useState<ArbPosition | null>(null)
+  const [closingPosition, setClosingPosition] = useState<ArbPosition | null>(null)
 
   useEffect(() => {
     saveArbPositions(positions)
@@ -120,6 +134,13 @@ export function ArbPositionsPanel({
     setDialogOpen(true)
   }, [])
 
+  const onSelectSpread = useCallback(
+    (ticker: string) => {
+      onSelectTicker?.(ticker)
+    },
+    [onSelectTicker],
+  )
+
   const onSave = useCallback((position: ArbPosition) => {
     setPositions((prev) => {
       const index = prev.findIndex((row) => row.id === position.id)
@@ -132,9 +153,14 @@ export function ArbPositionsPanel({
     })
   }, [])
 
-  const onRemove = useCallback((id: string) => {
+  const onConfirmClose = useCallback(() => {
+    if (!closingPosition) {
+      return
+    }
+    const id = closingPosition.id
+    setClosingPosition(null)
     setPositions((prev) => prev.filter((row) => row.id !== id))
-  }, [])
+  }, [closingPosition])
 
   const rows = positions.map((pos) => {
     const side = resolvePositionSide(pos)
@@ -160,10 +186,12 @@ export function ArbPositionsPanel({
       const current = quotes[pos.ticker]?.last ?? null
       const refLeg = pos.legs[pos.legs.length - 1]
       const refVolume = refLeg ? (volumeByCode[refLeg.code] ?? null) : null
-      const pnl = calcPositionLivePnl(avgSpread, current, refVolume, refLeg?.qty ?? 0, side)
+      const refLots = refLeg?.qty ?? 0
+      const pnl = calcPositionLivePnl(avgSpread, current, refVolume, refLots, side)
       const qty = pos.legs[0]?.qty ?? 1
       const takeProfit = normalizeOptionalPrice(pos.takeProfit)
       const stopLoss = normalizeOptionalPrice(pos.stopLoss)
+      const pointValueRub = calcSpreadPointValueRub(refVolume, refLots)
       return {
         id: pos.id,
         symbol: pos.ticker,
@@ -171,6 +199,7 @@ export function ArbPositionsPanel({
         avgPrice: avgSpread,
         side,
         ...(pnl?.kind === 'rub' ? { pl: pnl.value } : {}),
+        ...(pointValueRub != null ? { pointValueRub } : {}),
         ...(takeProfit != null ? { takeProfit } : {}),
         ...(stopLoss != null ? { stopLoss } : {}),
       }
@@ -235,18 +264,18 @@ export function ArbPositionsPanel({
                     : 'lossCell'
               const sideClass = side === 'buy' ? 'profitCell' : 'lossCell'
 
+              const isSelected = pos.ticker === selectedTicker
+
               return (
                 <TableRow
                   key={pos.id}
-                  className="cursor-pointer"
-                  onClick={() => onOpenEdit(pos)}
+                  className={cn('cursor-pointer', isSelected && 'bg-muted/40')}
+                  onClick={() => onSelectSpread(pos.ticker)}
                 >
                   <TableCell className="pl-1.5">
-                    <div className="flex flex-col">
-                      <span className="max-w-[220px] truncate font-medium" title={pos.ticker}>
-                        {pos.ticker}
-                      </span>
-                    </div>
+                    <span className="max-w-[220px] truncate font-medium" title={pos.ticker}>
+                      {pos.ticker}
+                    </span>
                   </TableCell>
                   <TableCell className={cn('text-right tabular-nums', sideClass)}>
                     {formatPositionSide(side)}
@@ -270,18 +299,32 @@ export function ArbPositionsPanel({
                     {renderExitLevelCell(stopLoss, slPnl, 'sl')}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      className="h-6 text-[10px]"
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onRemove(pos.id)
-                      }}
-                    >
-                      Закрыть
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        className="h-6 text-[10px]"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onOpenEdit(pos)
+                        }}
+                      >
+                        Изменить
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="xs"
+                        className="h-6 text-[10px]"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setClosingPosition(pos)
+                        }}
+                      >
+                        Закрыть
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               )
@@ -319,6 +362,37 @@ export function ArbPositionsPanel({
         editingPosition={editingPosition}
         onSave={onSave}
       />
+
+      <Dialog
+        open={closingPosition != null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setClosingPosition(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>Закрыть позицию?</DialogTitle>
+            <DialogDescription>
+              Позиция по спреду{' '}
+              <span className="font-medium text-foreground">
+                {closingPosition?.ticker ?? '—'}
+              </span>{' '}
+              будет удалена из списка. Это действие нельзя отменить.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody />
+          <DialogFooter className="px-5 pb-5">
+            <Button type="button" variant="secondary" onClick={() => setClosingPosition(null)}>
+              Отмена
+            </Button>
+            <Button type="button" variant="destructive" onClick={onConfirmClose}>
+              Закрыть позицию
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }
